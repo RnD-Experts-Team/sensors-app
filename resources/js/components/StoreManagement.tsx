@@ -268,10 +268,10 @@ function LinkDevicesDialog({
       if (data.success && data.devices) {
         setAvailableDevs(
           data.devices.map((d: Record<string, string>) => ({
-            id: d.id,
+            id: d.deviceId,
             name: d.name,
             type: d.type,
-            model: d.model,
+            model: d.modelName,
             token: d.token,
           }))
         );
