@@ -16,7 +16,9 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);
-
+$middleware->alias([
+            'auth.token.store' => \App\Http\Middleware\AuthTokenStoreScopeMiddleware::class,
+        ]);
         // Exclude YoSmart API routes from CSRF verification
         $middleware->validateCsrfTokens(except: [
             'api/yosmart/*',
