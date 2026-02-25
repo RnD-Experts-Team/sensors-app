@@ -13,7 +13,9 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::prefix('stores')->group(function () {
+Route::prefix('stores')->middleware([
+    AuthTokenStoreScopeMiddleware::class,
+])->group(function () {
     // GET /api/stores/{storeNumber}/sensors
     Route::get('{storeNumber}/sensors', [PublicStoreController::class, 'sensors'])
         ->name('api.stores.sensors');
