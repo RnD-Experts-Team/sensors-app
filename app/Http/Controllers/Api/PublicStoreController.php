@@ -3,8 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Http\Controllers\YoSmartController;
 use App\Models\Store;
+use App\Services\YoSmartService;
 use Illuminate\Http\JsonResponse;
 
 class PublicStoreController extends Controller
@@ -34,7 +34,18 @@ class PublicStoreController extends Controller
             ], 404);
         }
 
-        $yosmart = app(YoSmartController::class);
+        if (empty($store->yosmart_uaid) || empty($store->yosmart_secret)) {
+            return response()->json([
+                'success' => false,
+                'error'   => 'This store has no YoSmart credentials configured.',
+            ], 422);
+        }
+
+        $service = new YoSmartService(
+            uaid:    $store->yosmart_uaid,
+            secret:  $store->yosmart_secret,
+            storeId: $store->id,
+        );
 
         $hub = null;
         $sensors = [];
@@ -43,7 +54,7 @@ class PublicStoreController extends Controller
             $method = $this->resolveGetStateMethod($device->device_type);
 
             $state = $this->fetchDeviceState(
-                $yosmart,
+                $service,
                 $method,
                 $device->device_id,
                 $device->device_token,
@@ -93,15 +104,15 @@ class PublicStoreController extends Controller
     }
 
     /**
-     * Call the YoSmart API via the shared controller to get a device's state.
+     * Call the YoSmart API to get a device's state.
      */
     private function fetchDeviceState(
-        YoSmartController $yosmart,
+        YoSmartService $service,
         string $method,
         string $deviceId,
         string $deviceToken,
     ): array {
-        $result = $yosmart->callApi($method, [
+        $result = $service->callApi($method, [
             'targetDevice' => $deviceId,
             'token'        => $deviceToken,
         ]);
