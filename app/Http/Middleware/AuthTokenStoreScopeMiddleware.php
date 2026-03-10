@@ -41,22 +41,35 @@ class AuthTokenStoreScopeMiddleware
         $storeContext = $this->buildStoreContext($request);
 
         // 4) Redis cache: key includes token+route+method+store_context signature
-        $cache = Cache::store('redis');
-        $cacheKey = $this->verifyCacheKey($serviceName, $userToken, $request, $storeContext);
+       // $cache = Cache::store('redis');
+       // $cacheKey = $this->verifyCacheKey($serviceName, $userToken, $request, $storeContext);
 
-        $verify = $cache->remember($cacheKey, $cacheTtl, function () use (
-            $baseUrl,
-            $verifyPath,
-            $serviceName,
-            $callToken,
-            $timeout,
-            $retries,
-            $retryMs,
-            $userToken,
-            $request,
-            $storeContext
-        ) {
-            return $this->verifyWithAuthServer(
+        // $verify = $cache->remember($cacheKey, $cacheTtl, function () use (
+        //     $baseUrl,
+        //     $verifyPath,
+        //     $serviceName,
+        //     $callToken,
+        //     $timeout,
+        //     $retries,
+        //     $retryMs,
+        //     $userToken,
+        //     $request,
+        //     $storeContext
+        // ) {
+        //     return $this->verifyWithAuthServer(
+        //         $baseUrl,
+        //         $verifyPath,
+        //         $serviceName,
+        //         $callToken,
+        //         $timeout,
+        //         $retries,
+        //         $retryMs,
+        //         $userToken,
+        //         $request,
+        //         $storeContext
+        //     );
+        // });
+ $verify =  $this->verifyWithAuthServer(
                 $baseUrl,
                 $verifyPath,
                 $serviceName,
@@ -69,7 +82,6 @@ class AuthTokenStoreScopeMiddleware
                 $storeContext
             );
         });
-
         // 5) Enforce BOTH token validity + authorization decision
         $active = (bool) ($verify['active'] ?? false);
         $authorized = (bool) data_get($verify, 'ext.authorized', false);
@@ -89,14 +101,14 @@ class AuthTokenStoreScopeMiddleware
             abort(401, 'Unauthorized: missing user id');
         }
 
-        // 6) DO NOT REPLICATE USERS HERE.
-        $user = User::query()->find($userId);
-        if (!$user) {
-            abort(401, 'Unauthorized: user not synced yet');
-        }
+        // // 6) DO NOT REPLICATE USERS HERE.
+        // $user = User::query()->find($userId);
+        // if (!$user) {
+        //     abort(401, 'Unauthorized: user not synced yet');
+        // }
 
-        // 7) Login for session-based parts of this app
-        Auth::login($user);
+        // // 7) Login for session-based parts of this app
+        // Auth::login($user);
 
         // 8) Expose roles/perms/ext to downstream middlewares/controllers
         $request->attributes->set('authz_roles', (array) ($verify['roles'] ?? []));
