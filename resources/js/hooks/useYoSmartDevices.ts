@@ -17,7 +17,7 @@ interface DeviceState {
   };
 }
 
-export function useYoSmartDevices() {
+export function useYoSmartDevices(storeId: number) {
   const [devices, setDevices] = useState<Device[]>([]);
   const [homeId, setHomeId] = useState<string | null>(null);
   const [deviceStates, setDeviceStates] = useState<DeviceState>({});
@@ -33,7 +33,7 @@ export function useYoSmartDevices() {
       setLoading(true);
       setError(null);
 
-      const response = await fetchYoSmartDevices();
+      const response = await fetchYoSmartDevices(storeId);
 
       if (response.success && response.devices) {
         setDevices(response.devices);
@@ -56,7 +56,7 @@ export function useYoSmartDevices() {
    */
   const loadHome = useCallback(async () => {
     try {
-      const response = await fetchYoSmartHome();
+      const response = await fetchYoSmartHome(storeId);
 
       if (response.success && response.home) {
         setHomeId(response.home.homeId || response.home.id);
@@ -85,7 +85,7 @@ export function useYoSmartDevices() {
           },
         }));
 
-        const response = await getDeviceState(deviceId, deviceToken, deviceType);
+        const response = await getDeviceState(storeId, deviceId, deviceToken, deviceType);
 
         if (response.success && response.state) {
           setDeviceStates(prev => ({
@@ -146,7 +146,7 @@ export function useYoSmartDevices() {
           },
         }));
 
-        const response = await controlDeviceAction(deviceId, deviceToken, method, params);
+        const response = await controlDeviceAction(storeId, deviceId, deviceToken, method, params);
 
         if (response.success && response.data) {
           setDeviceStates(prev => ({
@@ -195,6 +195,7 @@ export function useYoSmartDevices() {
     loadHome();
   }, [loadDevices, loadHome]);
 
+
   /**
    * Fetch states for ALL devices in one go.
    * The backend calls {DeviceType}.getState for each device.
@@ -214,7 +215,7 @@ export function useYoSmartDevices() {
         return next;
       });
 
-      const response = await fetchAllDeviceStates();
+      const response = await fetchAllDeviceStates(storeId);
 
       if (response.success && response.devices) {
         const next: DeviceState = {};
@@ -250,9 +251,15 @@ export function useYoSmartDevices() {
    * Initial load
    */
   useEffect(() => {
+    // Reset state when switching stores
+    setDevices([]);
+    setDeviceStates({});
+    setHomeId(null);
+    setLastSync(null);
+    setError(null);
     loadDevices();
     loadHome();
-  }, [loadDevices, loadHome]);
+  }, [storeId, loadDevices, loadHome]);
 
   /**
    * Get state for a specific device (from cache or loading state)

@@ -14,12 +14,20 @@ class Store extends Model
         'store_number',
         'store_name',
         'is_active',
+        'yosmart_uaid',
+        'yosmart_secret',
     ];
+
+    /**
+     * Never expose the secret key in API responses.
+     */
+    protected $hidden = ['yosmart_secret'];
 
     protected function casts(): array
     {
         return [
-            'is_active' => 'boolean',
+            'is_active'      => 'boolean',
+            'yosmart_secret' => 'encrypted',
         ];
     }
 

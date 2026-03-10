@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { usePage } from '@inertiajs/react';
 import {
   Thermometer,
@@ -17,6 +17,7 @@ import {
   Signal,
 } from 'lucide-react';
 import { useYoSmartDevices } from '@/hooks/useYoSmartDevices';
+import { index as storesIndex } from '@/routes/stores';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -661,11 +662,122 @@ function DeviceCardDispatcher({
   }
 }
 
+// ─── Types ───────────────────────────────────────────────────────────
+
+interface StoreOption {
+  id: number;
+  store_name: string;
+  store_number: string;
+  yosmart_uaid?: string | null;
+}
+
+// ─── Store Selector ───────────────────────────────────────────────────
+
+function StoreSelector({
+  stores,
+  selectedId,
+  onChange,
+}: {
+  stores: StoreOption[];
+  selectedId: number | null;
+  onChange: (id: number) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {stores.map((s) => (
+        <button
+          key={s.id}
+          onClick={() => onChange(s.id)}
+          className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+            selectedId === s.id
+              ? 'border-primary bg-primary text-primary-foreground'
+              : 'border-border bg-background text-foreground hover:bg-muted'
+          }`}
+        >
+          {s.store_name}
+          <span className="ml-1.5 font-mono text-[11px] opacity-60">{s.store_number}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────
 
 export function YoSmartDeviceList() {
   const { temperatureUnit } = usePage().props;
   const targetUnit = temperatureUnit ?? 'F';
+
+  // ── Store selection ──
+  const [stores, setStores] = useState<StoreOption[]>([]);
+  const [storesLoading, setStoresLoading] = useState(true);
+  const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
+
+  const loadStores = useCallback(async () => {
+    setStoresLoading(true);
+    try {
+      const res = await fetch(storesIndex.url(), {
+        headers: { Accept: 'application/json' },
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (data.success && data.stores) {
+        const configured: StoreOption[] = data.stores.filter((s: StoreOption) => s.yosmart_uaid);
+        setStores(configured);
+        if (configured.length > 0) setSelectedStoreId(configured[0].id);
+      }
+    } catch {
+      // silent
+    } finally {
+      setStoresLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadStores(); }, [loadStores]);
+
+  // ── Guard: no stores configured ──
+  if (storesLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => <DeviceCardSkeleton key={i} />)}
+        </div>
+      </div>
+    );
+  }
+
+  if (stores.length === 0) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+          <WifiOff className="size-12 text-muted-foreground/30" />
+          <p className="text-lg font-medium">No YoSmart credentials configured</p>
+          <p className="text-sm text-muted-foreground">
+            Go to <a href="/stores" className="underline">Stores</a> and add YoSmart UAID & secret to at least one store.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!selectedStoreId) return null;
+
+  return (
+    <div className="space-y-4">
+      {stores.length > 1 && (
+        <StoreSelector stores={stores} selectedId={selectedStoreId} onChange={setSelectedStoreId} />
+      )}
+      <StoreDeviceView storeId={selectedStoreId} targetUnit={targetUnit} />
+    </div>
+  );
+}
+
+// ─── Per-store device view ────────────────────────────────────────────
+
+function StoreDeviceView({ storeId, targetUnit }: { storeId: number; targetUnit: string }) {
   const {
     devices,
     deviceStates,
@@ -676,7 +788,7 @@ export function YoSmartDeviceList() {
     fetchAllStates,
     getState,
     getDeviceStatus,
-  } = useYoSmartDevices();
+  } = useYoSmartDevices(storeId);
 
   // Auto-fetch all states once devices are loaded
   useEffect(() => {

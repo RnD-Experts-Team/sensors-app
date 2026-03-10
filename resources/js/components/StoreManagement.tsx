@@ -13,6 +13,10 @@ import {
   XCircle,
   ChevronDown,
   ChevronUp,
+  Eye,
+  EyeOff,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { Badge } from '@/components/ui/badge';
@@ -63,6 +67,7 @@ interface Store {
   store_number: string;
   store_name: string;
   is_active: boolean;
+  yosmart_uaid?: string | null;
   devices_count: number;
   hubs_count: number;
   sensors_count: number;
@@ -134,6 +139,9 @@ function StoreFormDialog({
 }) {
   const [storeNumber, setStoreNumber] = useState('');
   const [storeName, setStoreName] = useState('');
+  const [yosmartUaid, setYosmartUaid] = useState('');
+  const [yosmartSecret, setYosmartSecret] = useState('');
+  const [showSecret, setShowSecret] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -143,6 +151,9 @@ function StoreFormDialog({
     if (open) {
       setStoreNumber(store?.store_number || '');
       setStoreName(store?.store_name || '');
+      setYosmartUaid(store?.yosmart_uaid || '');
+      setYosmartSecret('');
+      setShowSecret(false);
       setError(null);
     }
   }, [open, store]);
@@ -153,7 +164,12 @@ function StoreFormDialog({
     setError(null);
 
     try {
-      const payload = { store_number: storeNumber, store_name: storeName };
+      const payload: Record<string, unknown> = {
+        store_number: storeNumber,
+        store_name: storeName,
+        yosmart_uaid: yosmartUaid || null,
+      };
+      if (yosmartSecret !== '') payload.yosmart_secret = yosmartSecret;
       let result;
 
       if (isEdit && store) {
@@ -183,7 +199,7 @@ function StoreFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>{isEdit ? 'Edit Store' : 'Add Store'}</DialogTitle>
@@ -212,6 +228,49 @@ function StoreFormDialog({
                 placeholder="e.g. Hudson"
                 required
               />
+            </div>
+
+            {/* YoSmart Credentials */}
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
+              <div className="relative flex justify-center">
+                <span className="bg-background text-muted-foreground px-2 text-xs">YoSmart Credentials</span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="yosmart_uaid">UAID</Label>
+              <Input
+                id="yosmart_uaid"
+                value={yosmartUaid}
+                onChange={(e) => setYosmartUaid(e.target.value)}
+                placeholder="ua_xxxxxxxxxxxxxx"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="yosmart_secret">Secret Key</Label>
+              <div className="relative">
+                <Input
+                  id="yosmart_secret"
+                  type={showSecret ? 'text' : 'password'}
+                  value={yosmartSecret}
+                  onChange={(e) => setYosmartSecret(e.target.value)}
+                  placeholder={isEdit && store?.yosmart_uaid ? '••••••• (leave blank to keep)' : 'Enter secret key'}
+                  className="pr-9"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-0 top-0 size-9 p-0"
+                  onClick={() => setShowSecret(!showSecret)}
+                  tabIndex={-1}
+                >
+                  {showSecret ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </Button>
+              </div>
+              <p className="text-muted-foreground text-xs">
+                {isEdit ? 'Leave blank to keep the existing secret.' : 'Optional — required for device management.'}
+              </p>
             </div>
 
             {error && (
@@ -264,7 +323,7 @@ function LinkDevicesDialog({
     setLoading(true);
     setError(null);
     try {
-      const data = await apiFetch(devicesAvailable.url());
+      const data = await apiFetch(devicesAvailable.url(store.id));
       if (data.success && data.devices) {
         setAvailableDevs(
           data.devices.map((d: Record<string, string>) => ({
@@ -283,7 +342,7 @@ function LinkDevicesDialog({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [store.id]);
 
   useEffect(() => {
     if (open) {
@@ -582,10 +641,19 @@ function StoreCard({
                 <CardDescription className="font-mono text-xs">{store.store_number}</CardDescription>
               </div>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex flex-col items-end gap-1">
               <Badge variant={store.is_active ? 'default' : 'secondary'} className="text-xs">
                 {store.is_active ? 'Active' : 'Inactive'}
               </Badge>
+              {store.yosmart_uaid ? (
+                <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+                  <Wifi className="size-3" /> YoSmart
+                </span>
+              ) : (
+                <span className="text-muted-foreground flex items-center gap-1 text-xs">
+                  <WifiOff className="size-3" /> No credentials
+                </span>
+              )}
             </div>
           </div>
         </CardHeader>

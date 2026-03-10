@@ -22,8 +22,8 @@ Route::get('reports', [App\Http\Controllers\ReportController::class, 'index'])
     ->middleware(['auth', 'verified'])
     ->name('reports');
 
-// YoSmart API Routes
-Route::middleware(['auth', 'verified'])->prefix('api/yosmart')->group(function () {
+// YoSmart API Routes (scoped per store)
+Route::middleware(['auth', 'verified'])->prefix('api/stores/{store}/yosmart')->group(function () {
     Route::get('/devices', [App\Http\Controllers\YoSmartController::class, 'listDevices'])->name('yosmart.devices.list');
     Route::get('/home', [App\Http\Controllers\YoSmartController::class, 'homeInfo'])->name('yosmart.home.info');
     Route::post('/device/state', [App\Http\Controllers\YoSmartController::class, 'deviceState'])->name('yosmart.device.state');
@@ -55,10 +55,10 @@ Route::middleware(['auth', 'verified'])->prefix('api/settings')->group(function 
 Route::middleware(['auth', 'verified'])->prefix('api/stores')->group(function () {
     Route::get('/', [App\Http\Controllers\StoreController::class, 'index'])->name('stores.index');
     Route::post('/', [App\Http\Controllers\StoreController::class, 'store'])->name('stores.store');
-    Route::get('/available-devices', [App\Http\Controllers\StoreController::class, 'availableDevices'])->name('stores.devices.available');
     Route::get('/{store}', [App\Http\Controllers\StoreController::class, 'show'])->name('stores.show');
     Route::put('/{store}', [App\Http\Controllers\StoreController::class, 'update'])->name('stores.update');
     Route::delete('/{store}', [App\Http\Controllers\StoreController::class, 'destroy'])->name('stores.destroy');
+    Route::get('/{store}/available-devices', [App\Http\Controllers\StoreController::class, 'availableDevices'])->name('stores.devices.available');
     Route::post('/{store}/devices', [App\Http\Controllers\StoreController::class, 'linkDevices'])->name('stores.devices.link');
     Route::delete('/{store}/devices/{device}', [App\Http\Controllers\StoreController::class, 'unlinkDevice'])->name('stores.devices.unlink');
 });

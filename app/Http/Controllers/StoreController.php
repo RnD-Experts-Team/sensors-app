@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\YoSmartController;
 use App\Models\Store;
 use App\Models\StoreDevice;
 use Illuminate\Http\JsonResponse;
@@ -28,8 +29,10 @@ class StoreController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'store_number' => 'required|string|max:50|unique:stores,store_number',
-            'store_name'   => 'required|string|max:255',
+            'store_number'   => 'required|string|max:50|unique:stores,store_number',
+            'store_name'     => 'required|string|max:255',
+            'yosmart_uaid'   => 'nullable|string|max:100',
+            'yosmart_secret' => 'nullable|string|max:500',
         ]);
 
         $store = Store::create($validated);
@@ -59,9 +62,11 @@ class StoreController extends Controller
     public function update(Request $request, Store $store): JsonResponse
     {
         $validated = $request->validate([
-            'store_number' => 'sometimes|required|string|max:50|unique:stores,store_number,' . $store->id,
-            'store_name'   => 'sometimes|required|string|max:255',
-            'is_active'    => 'sometimes|boolean',
+            'store_number'   => 'sometimes|required|string|max:50|unique:stores,store_number,' . $store->id,
+            'store_name'     => 'sometimes|required|string|max:255',
+            'is_active'      => 'sometimes|boolean',
+            'yosmart_uaid'   => 'sometimes|nullable|string|max:100',
+            'yosmart_secret' => 'sometimes|nullable|string|max:500',
         ]);
 
         $store->update($validated);
@@ -148,17 +153,13 @@ class StoreController extends Controller
     }
 
     /**
-     * List all available YoSmart devices (from the API) so the user
-     * can pick which to link to a store.
+     * List all available YoSmart devices for a store so the user
+     * can pick which to link to it.
      */
-    public function availableDevices(): JsonResponse
+    public function availableDevices(Store $store): JsonResponse
     {
         $yosmart = app(YoSmartController::class);
 
-        // Reuse the existing listDevices logic internally
-        $response = $yosmart->listDevices();
-        $data = json_decode($response->getContent(), true);
-
-        return response()->json($data);
+        return $yosmart->listDevices($store);
     }
 }
