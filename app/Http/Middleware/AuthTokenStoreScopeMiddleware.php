@@ -69,19 +69,18 @@ class AuthTokenStoreScopeMiddleware
         //         $storeContext
         //     );
         // });
- $verify =  $this->verifyWithAuthServer(
-                $baseUrl,
-                $verifyPath,
-                $serviceName,
-                $callToken,
-                $timeout,
-                $retries,
-                $retryMs,
-                $userToken,
-                $request,
-                $storeContext
-            );
-        });
+ $verify = $this->verifyWithAuthServer(
+    $baseUrl,
+    $verifyPath,
+    $serviceName,
+    $callToken,
+    $timeout,
+    $retries,
+    $retryMs,
+    $userToken,
+    $request,
+    $storeContext
+);
         // 5) Enforce BOTH token validity + authorization decision
         $active = (bool) ($verify['active'] ?? false);
         $authorized = (bool) data_get($verify, 'ext.authorized', false);
