@@ -2,8 +2,8 @@
 
 namespace App\Console\Commands;
 
-use App\Http\Controllers\YoSmartController;
 use App\Models\SensorReport;
+use App\Services\YoSmartService;
 use App\Models\SnapshotSchedule;
 use App\Models\Store;
 use App\Models\StoreDevice;
@@ -46,7 +46,6 @@ class CaptureSnapshots extends Command
             return self::SUCCESS;
         }
 
-        $yosmart       = app(YoSmartController::class);
         $totalCaptured = 0;
         $failed        = 0;
         $errors        = [];
@@ -55,7 +54,7 @@ class CaptureSnapshots extends Command
             $this->line("  → {$store->store_name} ({$store->store_number})");
 
             try {
-                $count = $this->captureForStore($store, $yosmart);
+                $count = $this->captureForStore($store);
                 $totalCaptured += $count;
                 $this->info("    ✅ {$count} device(s)");
             } catch (\Throwable $e) {
@@ -77,15 +76,25 @@ class CaptureSnapshots extends Command
         return self::SUCCESS;
     }
 
-    private function captureForStore($store, YoSmartController $yosmart): int
+    private function captureForStore($store): int
     {
+        if (empty($store->yosmart_uaid) || empty($store->yosmart_secret)) {
+            throw new \RuntimeException("Store has no YoSmart credentials configured.");
+        }
+
+        $service = new YoSmartService(
+            uaid:    $store->yosmart_uaid,
+            secret:  $store->yosmart_secret,
+            storeId: $store->id,
+        );
+
         $count = 0;
 
         foreach ($store->devices as $device) {
             /** @var StoreDevice $device */
             $method = $device->device_type . '.getState';
 
-            $result = $yosmart->callApi($method, [
+            $result = $service->callApi($method, [
                 'targetDevice' => $device->device_id,
                 'token'        => $device->device_token,
             ]);

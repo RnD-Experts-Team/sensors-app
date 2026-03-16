@@ -10,6 +10,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use App\Services\YoSmartService;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 
@@ -116,7 +117,19 @@ class ReportController extends Controller
         ]);
 
         $store = Store::with('devices')->findOrFail($validated['store_id']);
-        $yosmart = app(YoSmartController::class);
+
+        if (empty($store->yosmart_uaid) || empty($store->yosmart_secret)) {
+            return response()->json([
+                'success' => false,
+                'error'   => 'This store has no YoSmart credentials configured.',
+            ], 422);
+        }
+
+        $service = new YoSmartService(
+            uaid:    $store->yosmart_uaid,
+            secret:  $store->yosmart_secret,
+            storeId: $store->id,
+        );
 
         $reports = [];
 
@@ -124,7 +137,7 @@ class ReportController extends Controller
             /** @var StoreDevice $device */
             $method = $device->device_type . '.getState';
 
-            $result = $yosmart->callApi($method, [
+            $result = $service->callApi($method, [
                 'targetDevice' => $device->device_id,
                 'token'        => $device->device_token,
             ]);

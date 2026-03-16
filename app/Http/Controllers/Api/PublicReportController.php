@@ -3,8 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Http\Controllers\YoSmartController;
 use App\Models\AppSetting;
+use App\Services\YoSmartService;
 use App\Models\SensorReport;
 use App\Models\Store;
 use Illuminate\Http\JsonResponse;
@@ -95,13 +95,25 @@ class PublicReportController extends Controller
             return $this->storeNotFound($storeNumber);
         }
 
-        $yosmart = app(YoSmartController::class);
+        if (empty($store->yosmart_uaid) || empty($store->yosmart_secret)) {
+            return response()->json([
+                'success' => false,
+                'error'   => 'This store has no YoSmart credentials configured.',
+            ], 422);
+        }
+
+        $service = new YoSmartService(
+            uaid:    $store->yosmart_uaid,
+            secret:  $store->yosmart_secret,
+            storeId: $store->id,
+        );
+
         $snapshot = [];
 
         foreach ($store->devices as $device) {
             $method = $device->device_type . '.getState';
 
-            $result = $yosmart->callApi($method, [
+            $result = $service->callApi($method, [
                 'targetDevice' => $device->device_id,
                 'token'        => $device->device_token,
             ]);
