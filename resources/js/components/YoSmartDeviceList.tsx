@@ -41,20 +41,13 @@ function fToC(f: number): number {
 /**
  * Convert a temperature value from the device's native mode to the
  * target display unit, then format it.
+ * YoSmart API always returns values in Celsius regardless of the device's
+ * physical display mode setting.
  */
 function formatTemp(value: number, mode?: string, targetUnit: string = 'F'): string {
   const target = targetUnit.toUpperCase();
-  const source = (mode ?? 'f').toLowerCase();
-  let converted = value;
-
-  if (source === 'c' && target === 'F') {
-    converted = cToF(value);
-  } else if (source === 'f' && target === 'C') {
-    converted = fToC(value);
-  } else if (source === 'c' && target === 'C') {
-    converted = value;
-  }
-
+  // API always returns Celsius — convert to F if needed
+  const converted = target === 'F' ? cToF(value) : value;
   return `${converted.toFixed(1)}°${target}`;
 }
 
@@ -94,9 +87,9 @@ function batteryPercent(level: number): string {
   return map[level] ?? `${level}`;
 }
 
-/** Determine temperature colour class (always compares in °F) */
+/** Determine temperature colour class (value is always Celsius from API) */
 function tempColor(value: number, mode?: string): string {
-  const f = (mode ?? 'f').toLowerCase() === 'c' ? cToF(value) : value;
+  const f = cToF(value); // API always returns Celsius
   if (f <= 0) return 'text-blue-600 dark:text-blue-400';
   if (f <= 32) return 'text-sky-600 dark:text-sky-400';
   if (f <= 60) return 'text-teal-600 dark:text-teal-400';
@@ -265,8 +258,8 @@ function THSensorCard({
   const hasAlarm =
     alarm && (alarm.lowBattery || alarm.lowTemp || alarm.highTemp || alarm.lowHumidity || alarm.highHumidity);
 
-  const isFreezer = temperature !== undefined && temperature <= 32 && (mode ?? 'f').toLowerCase() !== 'c';
-  const isFreezerC = temperature !== undefined && temperature <= 0 && (mode ?? 'f').toLowerCase() === 'c';
+  // API always returns Celsius; ≤8°C = fridge/freezer (shows snowflake icon)
+  const isFreezer = temperature !== undefined && temperature <= 8;
 
   return (
     <Card className="group overflow-hidden transition-shadow hover:shadow-md">
@@ -276,12 +269,12 @@ function THSensorCard({
           <div className="flex items-center gap-3">
             <div
               className={`flex size-10 items-center justify-center rounded-lg ${
-                isFreezer || isFreezerC
+                isFreezer
                   ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400'
                   : 'bg-orange-100 text-orange-600 dark:bg-orange-900/40 dark:text-orange-400'
               }`}
             >
-              {isFreezer || isFreezerC ? <Snowflake className="size-5" /> : <Thermometer className="size-5" />}
+              {isFreezer ? <Snowflake className="size-5" /> : <Thermometer className="size-5" />}
             </div>
             <div>
               <CardTitle className="text-base">{device.name}</CardTitle>

@@ -38,7 +38,7 @@ class AppSetting extends Model
      */
     public static function temperatureUnit(): string
     {
-        return strtoupper(static::getValue('temperature_unit', 'F'));
+        return strtoupper(static::getValue('temperature_unit', 'C'));
     }
 
     /**
@@ -50,7 +50,7 @@ class AppSetting extends Model
             return null;
         }
 
-        $from = strtoupper($fromUnit ?? 'F');
+        $from = strtoupper($fromUnit ?? 'C');
         $to   = strtoupper($toUnit);
 
         if ($from === $to) {
@@ -79,11 +79,13 @@ class AppSetting extends Model
         $target = strtoupper($targetUnit);
 
         if ($target === 'F') {
-            return "CASE WHEN LOWER(temperature_unit) = 'c' THEN ({$column} * 9.0 / 5.0 + 32) ELSE {$column} END";
+            // YoSmart API always returns Celsius; only skip conversion when unit is explicitly 'f'
+            return "CASE WHEN LOWER(temperature_unit) = 'f' THEN {$column} ELSE ({$column} * 9.0 / 5.0 + 32) END";
         }
 
         if ($target === 'C') {
-            return "CASE WHEN LOWER(temperature_unit) = 'f' THEN (({$column} - 32) * 5.0 / 9.0) ELSE {$column} END";
+            // Default (null or 'c') is already Celsius; only convert when explicitly 'f'
+            return "CASE WHEN LOWER(temperature_unit) = 'c' THEN {$column} ELSE (({$column} - 32) * 5.0 / 9.0) END";
         }
 
         return $column;

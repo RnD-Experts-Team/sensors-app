@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\AppSetting;
 use App\Models\Store;
 use App\Services\YoSmartService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class PublicStoreController extends Controller
 {
@@ -20,7 +22,7 @@ class PublicStoreController extends Controller
      * by external displays / dashboards. A middleware can be wrapped later
      * to add API-key or token protection.
      */
-    public function sensors(string $storeNumber): JsonResponse
+    public function sensors(Request $request, string $storeNumber): JsonResponse
     {
         $store = Store::where('store_number', $storeNumber)
             ->where('is_active', true)
@@ -49,6 +51,7 @@ class PublicStoreController extends Controller
 
         $hub = null;
         $sensors = [];
+        $targetUnit = $this->resolveUnit($request);
 
         foreach ($store->devices as $device) {
             $method = $this->resolveGetStateMethod($device->device_type);
@@ -60,17 +63,22 @@ class PublicStoreController extends Controller
                 $device->device_token,
             );
 
+            $rawState = $state['data']['state'] ?? null;
+            $rawTemp  = is_array($rawState) ? ($rawState['temperature'] ?? null) : null;
+
             $entry = [
-                'device_id'   => $device->device_id,
-                'device_name' => $device->device_name,
-                'device_type' => $device->device_type,
-                'model_name'  => $device->model_name,
-                'is_hub'      => $device->is_hub,
-                'online'      => $state['data']['online'] ?? null,
-                'state'       => $state['data']['state'] ?? null,
-                'reported_at' => $state['data']['reportAt'] ?? null,
-                'success'     => ($state['code'] ?? null) === '000000',
-                'error'       => ($state['code'] ?? null) !== '000000'
+                'device_id'        => $device->device_id,
+                'device_name'      => $device->device_name,
+                'device_type'      => $device->device_type,
+                'model_name'       => $device->model_name,
+                'is_hub'           => $device->is_hub,
+                'online'           => $state['data']['online'] ?? null,
+                'temperature'      => AppSetting::convertTemp($rawTemp, 'c', $targetUnit),
+                'temperature_unit' => $targetUnit,
+                'state'            => $rawState,
+                'reported_at'      => $state['data']['reportAt'] ?? null,
+                'success'          => ($state['code'] ?? null) === '000000',
+                'error'            => ($state['code'] ?? null) !== '000000'
                     ? ($state['desc'] ?? 'Unknown error')
                     : null,
             ];
@@ -83,16 +91,27 @@ class PublicStoreController extends Controller
         }
 
         return response()->json([
-            'success' => true,
-            'store'   => [
+            'success'          => true,
+            'store'            => [
                 'store_number' => $store->store_number,
                 'store_name'   => $store->store_name,
             ],
-            'hub'     => $hub,
-            'sensors' => $sensors,
-            'count'   => count($sensors),
-            'fetched_at' => now()->toIso8601String(),
+            'temperature_unit' => $targetUnit,
+            'hub'              => $hub,
+            'sensors'          => $sensors,
+            'count'            => count($sensors),
+            'fetched_at'       => now()->toIso8601String(),
         ]);
+    }
+
+    /**
+     * Resolve the requested temperature unit from the query string.
+     * Accepts ?unit=c or ?unit=f (case-insensitive). Defaults to 'C'.
+     */
+    private function resolveUnit(Request $request): string
+    {
+        $unit = strtoupper($request->input('unit', 'C'));
+        return in_array($unit, ['C', 'F'], true) ? $unit : 'C';
     }
 
     /**

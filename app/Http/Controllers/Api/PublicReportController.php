@@ -88,7 +88,7 @@ class PublicReportController extends Controller
      * Collect live sensor data from YoSmart for every device in the store,
      * persist a SensorReport row per device, and return the snapshot.
      */
-    public function snapshot(string $storeNumber): JsonResponse
+    public function snapshot(Request $request, string $storeNumber): JsonResponse
     {
         $store = $this->resolveStore($storeNumber);
         if (!$store) {
@@ -109,6 +109,7 @@ class PublicReportController extends Controller
         );
 
         $snapshot = [];
+        $targetUnit = $this->resolveUnit($request);
 
         foreach ($store->devices as $device) {
             $method = $device->device_type . '.getState';
@@ -130,7 +131,7 @@ class PublicReportController extends Controller
                 'device_name'      => $device->device_name,
                 'online'           => $data['online'] ?? false,
                 'temperature'      => $state['temperature'] ?? $state['temp'] ?? null,
-                'temperature_unit' => $state['mode'] ?? null,
+                'temperature_unit' => 'c',
                 'humidity'         => $state['humidity'] ?? null,
                 'battery_level'    => $state['battery'] ?? null,
                 'alarm'            => self::parseAlarm($state['alarm'] ?? false),
@@ -145,8 +146,8 @@ class PublicReportController extends Controller
                 'device_name' => $device->device_name,
                 'device_type' => $device->device_type,
                 'online'      => $report->online,
-                'temperature' => AppSetting::convertTemp($report->temperature, $report->temperature_unit, AppSetting::temperatureUnit()),
-                'temperature_unit' => AppSetting::temperatureUnit(),
+                'temperature' => AppSetting::convertTemp($report->temperature, $report->temperature_unit, $targetUnit),
+                'temperature_unit' => $targetUnit,
                 'humidity'    => $report->humidity,
                 'battery'     => $report->battery_level,
                 'alarm'       => $report->alarm,
@@ -159,7 +160,7 @@ class PublicReportController extends Controller
         return response()->json([
             'success'          => true,
             'store'            => $this->storePayload($store),
-            'temperature_unit' => AppSetting::temperatureUnit(),
+            'temperature_unit' => $targetUnit,
             'snapshot'         => $snapshot,
             'count'            => count($snapshot),
             'captured_at'      => now()->toIso8601String(),
@@ -204,7 +205,7 @@ class PublicReportController extends Controller
         }
 
         // Temperature unit conversion SQL expression
-        $targetUnit = AppSetting::temperatureUnit();
+        $targetUnit = $this->resolveUnit($request);
         $t = AppSetting::tempSqlExpr($targetUnit);
 
         // Time-series
@@ -316,7 +317,7 @@ class PublicReportController extends Controller
         $perPage = min((int) $request->input('per_page', 50), 200);
         $paginated = $query->paginate($perPage);
 
-        $targetUnit = AppSetting::temperatureUnit();
+        $targetUnit = $this->resolveUnit($request);
 
         $paginated->getCollection()->transform(function ($report) use ($targetUnit) {
             $report->temperature = AppSetting::convertTemp($report->temperature, $report->temperature_unit, $targetUnit);
@@ -367,7 +368,7 @@ class PublicReportController extends Controller
             ->limit(100)
             ->get();
 
-        $targetUnit = AppSetting::temperatureUnit();
+        $targetUnit = $this->resolveUnit($request);
 
         $alarms->transform(function ($report) use ($targetUnit) {
             $report->temperature = AppSetting::convertTemp($report->temperature, $report->temperature_unit, $targetUnit);
@@ -404,6 +405,16 @@ class PublicReportController extends Controller
     }
 
     // ── Helpers ────────────────────────────────────────────────────
+
+    /**
+     * Resolve the requested temperature unit from the query string.
+     * Accepts ?unit=c or ?unit=f (case-insensitive). Defaults to 'C'.
+     */
+    private function resolveUnit(Request $request): string
+    {
+        $unit = strtoupper($request->input('unit', 'C'));
+        return in_array($unit, ['C', 'F'], true) ? $unit : 'C';
+    }
 
     private function resolveStore(string $storeNumber): ?Store
     {

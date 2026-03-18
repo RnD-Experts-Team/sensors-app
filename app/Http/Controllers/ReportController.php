@@ -154,7 +154,7 @@ class ReportController extends Controller
                 'device_name'      => $device->device_name,
                 'online'           => $data['online'] ?? false,
                 'temperature'      => $state['temperature'] ?? $state['temp'] ?? null,
-                'temperature_unit' => $state['mode'] ?? null,
+                'temperature_unit' => 'c',
                 'humidity'         => $state['humidity'] ?? null,
                 'battery_level'    => $state['battery'] ?? null,
                 'alarm'            => self::parseAlarm($state['alarm'] ?? false),
