@@ -12,7 +12,7 @@ use Illuminate\Http\Request;
 class PublicStoreController extends Controller
 {
     /**
-     * Public endpoint: GET /api/stores/{storeNumber}/sensors
+     * Public endpoint: GET /api/stores/{store_id}/sensors
      *
      * Fetches live sensor data for every device linked to the given store.
      * Returns the store info, hub status, and every sensor's current state
@@ -22,9 +22,9 @@ class PublicStoreController extends Controller
      * by external displays / dashboards. A middleware can be wrapped later
      * to add API-key or token protection.
      */
-    public function sensors(Request $request, string $storeNumber): JsonResponse
+    public function sensors(Request $request, string $store_id): JsonResponse
     {
-        $store = Store::where('store_number', $storeNumber)
+        $store = Store::where('store_number', $store_id)
             ->where('is_active', true)
             ->with('devices')
             ->first();

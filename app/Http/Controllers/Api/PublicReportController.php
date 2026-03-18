@@ -23,7 +23,7 @@ use Illuminate\Support\Facades\DB;
  *  • Pagination, date-range filtering, field selection
  *  • CORS-friendly JSON responses
  *
- * Base URL: /api/stores/{storeNumber}/reports
+ * Base URL: /api/stores/{store_id}/reports
  */
 class PublicReportController extends Controller
 {
@@ -83,16 +83,16 @@ class PublicReportController extends Controller
     // ── Live Snapshot ───────────────────────────────────────────────
 
     /**
-     * POST /api/stores/{storeNumber}/reports/snapshot
+     * POST /api/stores/{store_id}/reports/snapshot
      *
      * Collect live sensor data from YoSmart for every device in the store,
      * persist a SensorReport row per device, and return the snapshot.
      */
-    public function snapshot(Request $request, string $storeNumber): JsonResponse
+    public function snapshot(Request $request, string $store_id): JsonResponse
     {
-        $store = $this->resolveStore($storeNumber);
+        $store = $this->resolveStore($store_id);
         if (!$store) {
-            return $this->storeNotFound($storeNumber);
+            return $this->storeNotFound($store_id);
         }
 
         if (empty($store->yosmart_uaid) || empty($store->yosmart_secret)) {
@@ -170,16 +170,16 @@ class PublicReportController extends Controller
     // ── Aggregated Report ──────────────────────────────────────────
 
     /**
-     * GET /api/stores/{storeNumber}/reports?period=daily|weekly|monthly&date=YYYY-MM-DD&device_id=…&fields=…
+     * GET /api/stores/{store_id}/reports?period=daily|weekly|monthly&date=YYYY-MM-DD&device_id=…&fields=…
      *
      * Returns time-series aggregations (avg/min/max temp & humidity),
      * per-device summaries, and overall statistics.
      */
-    public function index(Request $request, string $storeNumber): JsonResponse
+    public function index(Request $request, string $store_id): JsonResponse
     {
-        $store = $this->resolveStore($storeNumber);
+        $store = $this->resolveStore($store_id);
         if (!$store) {
-            return $this->storeNotFound($storeNumber);
+            return $this->storeNotFound($store_id);
         }
 
         $period   = $request->input('period', 'daily');
@@ -287,15 +287,15 @@ class PublicReportController extends Controller
     // ── Report History (paginated) ─────────────────────────────────
 
     /**
-     * GET /api/stores/{storeNumber}/reports/history?from=&to=&per_page=&device_type=
+     * GET /api/stores/{store_id}/reports/history?from=&to=&per_page=&device_type=
      *
      * Raw report rows with cursor-based pagination.
      */
-    public function history(Request $request, string $storeNumber): JsonResponse
+    public function history(Request $request, string $store_id): JsonResponse
     {
-        $store = $this->resolveStore($storeNumber);
+        $store = $this->resolveStore($store_id);
         if (!$store) {
-            return $this->storeNotFound($storeNumber);
+            return $this->storeNotFound($store_id);
         }
 
         $query = SensorReport::forStore($store->id)
@@ -336,16 +336,16 @@ class PublicReportController extends Controller
     // ── Alerts Summary ─────────────────────────────────────────────
 
     /**
-     * GET /api/stores/{storeNumber}/reports/alerts?from=&to=
+     * GET /api/stores/{store_id}/reports/alerts?from=&to=
      *
      * Returns a summary of alarm events and offline periods within a
      * date range (defaults to the last 24 hours).
      */
-    public function alerts(Request $request, string $storeNumber): JsonResponse
+    public function alerts(Request $request, string $store_id): JsonResponse
     {
-        $store = $this->resolveStore($storeNumber);
+        $store = $this->resolveStore($store_id);
         if (!$store) {
-            return $this->storeNotFound($storeNumber);
+            return $this->storeNotFound($store_id);
         }
 
         $from = Carbon::parse($request->input('from', now()->subDay()));
@@ -416,19 +416,19 @@ class PublicReportController extends Controller
         return in_array($unit, ['C', 'F'], true) ? $unit : 'C';
     }
 
-    private function resolveStore(string $storeNumber): ?Store
+    private function resolveStore(string $store_id): ?Store
     {
-        return Store::where('store_number', $storeNumber)
+        return Store::where('store_number', $store_id)
             ->where('is_active', true)
             ->with('devices')
             ->first();
     }
 
-    private function storeNotFound(string $storeNumber): JsonResponse
+    private function storeNotFound(string $store_id): JsonResponse
     {
         return response()->json([
             'success' => false,
-            'error'   => "Store '{$storeNumber}' not found or inactive.",
+            'error'   => "Store '{$store_id}' not found or inactive.",
         ], 404);
     }
 
