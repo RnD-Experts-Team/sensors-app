@@ -23,6 +23,11 @@ return new class extends Migration
             $table->string('parsed_store_number')->nullable()->after('device_name');
         });
 
+        // Drop the FK on store_id first (MySQL requires this before dropping the unique index it uses)
+        Schema::table('store_devices', function (Blueprint $table) {
+            $table->dropForeign(['store_id']);
+        });
+
         // Drop old unique constraint and add new one
         Schema::table('store_devices', function (Blueprint $table) {
             $table->dropUnique(['store_id', 'device_id']);
@@ -39,6 +44,7 @@ return new class extends Migration
 
             $table->unsignedBigInteger('store_id')->nullable(false)->change();
             $table->unique(['store_id', 'device_id']);
+            $table->foreign('store_id')->references('id')->on('stores')->cascadeOnDelete();
         });
     }
 };
