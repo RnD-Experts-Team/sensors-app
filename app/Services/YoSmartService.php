@@ -76,7 +76,7 @@ class YoSmartService
         $token = Cache::get($this->tokenCacheKey);
 
         if ($token) {
-            Log::debug('YoSmart: using cached token', ['store_id' => $this->storeId]);
+            Log::debug('YoSmart: using cached token', ['credential_id' => $this->credentialId]);
             return $token;
         }
 
@@ -85,7 +85,7 @@ class YoSmartService
 
     public function refreshAccessToken(): ?string
     {
-        Log::info('YoSmart: force-refreshing token', ['store_id' => $this->storeId]);
+        Log::info('YoSmart: force-refreshing token', ['credential_id' => $this->credentialId]);
         Cache::forget($this->tokenCacheKey);
 
         return $this->fetchAccessToken();
@@ -94,7 +94,7 @@ class YoSmartService
     private function fetchAccessToken(): ?string
     {
         try {
-            Log::info('YoSmart: fetching new access token', ['store_id' => $this->storeId]);
+            Log::info('YoSmart: fetching new access token', ['credential_id' => $this->credentialId]);
 
             $response = Http::asForm()->post(self::TOKEN_URL, [
                 'grant_type'    => 'client_credentials',
@@ -121,13 +121,13 @@ class YoSmartService
             }
 
             Log::error('YoSmart: token response error', [
-                'store_id' => $this->storeId,
+                'credential_id' => $this->credentialId,
                 'status'   => $response->status(),
                 'body'     => $response->body(),
             ]);
         } catch (\Exception $e) {
             Log::error('YoSmart: token fetch exception', [
-                'store_id' => $this->storeId,
+                'credential_id' => $this->credentialId,
                 'error'    => $e->getMessage(),
             ]);
         }
@@ -151,7 +151,7 @@ class YoSmartService
         $token = $this->getAccessToken();
 
         if (!$token) {
-            Log::error('YoSmart: no access token available', ['store_id' => $this->storeId]);
+            Log::error('YoSmart: no access token available', ['credential_id' => $this->credentialId]);
             return null;
         }
 
@@ -163,7 +163,7 @@ class YoSmartService
 
         try {
             Log::debug('YoSmart: calling API', [
-                'store_id' => $this->storeId,
+                'credential_id' => $this->credentialId,
                 'method'   => $method,
                 'isRetry'  => $isRetry,
             ]);
@@ -179,7 +179,7 @@ class YoSmartService
 
                 if ($code === '000000') {
                     Log::debug('YoSmart: API call successful', [
-                        'store_id' => $this->storeId,
+                        'credential_id' => $this->credentialId,
                         'method'   => $method,
                     ]);
                     return $result;
@@ -187,7 +187,7 @@ class YoSmartService
 
                 if (!$isRetry && in_array($code, self::TOKEN_ERROR_CODES, true)) {
                     Log::warning('YoSmart: token error, refreshing', [
-                        'store_id' => $this->storeId,
+                        'credential_id' => $this->credentialId,
                         'method'   => $method,
                         'code'     => $code,
                     ]);
@@ -198,7 +198,7 @@ class YoSmartService
                 }
 
                 Log::warning('YoSmart: API error response', [
-                    'store_id' => $this->storeId,
+                    'credential_id' => $this->credentialId,
                     'method'   => $method,
                     'code'     => $code,
                     'desc'     => $result['desc'] ?? 'No description',
@@ -208,13 +208,13 @@ class YoSmartService
             }
 
             Log::error('YoSmart: HTTP error', [
-                'store_id' => $this->storeId,
+                'credential_id' => $this->credentialId,
                 'status'   => $response->status(),
                 'body'     => $response->body(),
             ]);
         } catch (\Exception $e) {
             Log::error('YoSmart: callApi exception', [
-                'store_id' => $this->storeId,
+                'credential_id' => $this->credentialId,
                 'method'   => $method,
                 'error'    => $e->getMessage(),
             ]);
