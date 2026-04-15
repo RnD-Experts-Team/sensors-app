@@ -15,18 +15,15 @@ class PublicStoreController extends Controller
      * Public endpoint: GET /api/stores/{store_id}/sensors
      *
      * Fetches live sensor data for every device linked to the given store.
-     * Returns the store info, hub status, and every sensor's current state
-     * in a single response.
-     *
-     * This endpoint is intentionally public (no auth) so it can be consumed
-     * by external displays / dashboards. A middleware can be wrapped later
-     * to add API-key or token protection.
+     * Devices may be spread across multiple credentials.
      */
     public function sensors(Request $request, string $store_id): JsonResponse
     {
         $store = Store::where('store_number', $store_id)
             ->where('is_active', true)
-            ->with('devices')
+            ->with(['devices' => function ($q) {
+                $q->with('credential');
+            }])
             ->first();
 
         if (!$store) {
@@ -36,57 +33,68 @@ class PublicStoreController extends Controller
             ], 404);
         }
 
-        if (empty($store->yosmart_uaid) || empty($store->yosmart_secret)) {
+        if ($store->devices->isEmpty()) {
             return response()->json([
                 'success' => false,
-                'error'   => 'This store has no YoSmart credentials configured.',
+                'error'   => 'This store has no linked devices.',
             ], 422);
         }
 
-        $service = new YoSmartService(
-            uaid:    $store->yosmart_uaid,
-            secret:  $store->yosmart_secret,
-            storeId: $store->id,
-        );
+        // Group devices by credential for efficient API usage
+        $byCredential = $store->devices->groupBy('credential_id');
 
         $hub = null;
         $sensors = [];
         $targetUnit = $this->resolveUnit($request);
 
-        foreach ($store->devices as $device) {
-            $method = $this->resolveGetStateMethod($device->device_type);
+        foreach ($byCredential as $credentialId => $credentialDevices) {
+            $credential = $credentialDevices->first()->credential;
 
-            $state = $this->fetchDeviceState(
-                $service,
-                $method,
-                $device->device_id,
-                $device->device_token,
+            if (! $credential || ! $credential->hasCredentials()) {
+                continue;
+            }
+
+            $service = new YoSmartService(
+                uaid:         $credential->uaid,
+                secret:       $credential->secret,
+                credentialId: $credential->id,
             );
 
-            $rawState = $state['data']['state'] ?? null;
-            $rawTemp  = is_array($rawState) ? ($rawState['temperature'] ?? null) : null;
+            foreach ($credentialDevices as $device) {
+                $method = $this->resolveGetStateMethod($device->device_type);
 
-            $entry = [
-                'device_id'        => $device->device_id,
-                'device_name'      => $device->device_name,
-                'device_type'      => $device->device_type,
-                'model_name'       => $device->model_name,
-                'is_hub'           => $device->is_hub,
-                'online'           => $state['data']['online'] ?? null,
-                'temperature'      => AppSetting::convertTemp($rawTemp, 'c', $targetUnit),
-                'temperature_unit' => $targetUnit,
-                'state'            => $rawState,
-                'reported_at'      => $state['data']['reportAt'] ?? null,
-                'success'          => ($state['code'] ?? null) === '000000',
-                'error'            => ($state['code'] ?? null) !== '000000'
-                    ? ($state['desc'] ?? 'Unknown error')
-                    : null,
-            ];
+                $state = $this->fetchDeviceState(
+                    $service,
+                    $method,
+                    $device->device_id,
+                    $device->device_token,
+                );
 
-            if ($device->is_hub) {
-                $hub = $entry;
-            } else {
-                $sensors[] = $entry;
+                $rawState = $state['data']['state'] ?? null;
+                $rawTemp  = is_array($rawState) ? ($rawState['temperature'] ?? null) : null;
+
+                $entry = [
+                    'device_id'        => $device->device_id,
+                    'device_name'      => $device->device_name,
+                    'device_type'      => $device->device_type,
+                    'model_name'       => $device->model_name,
+                    'is_hub'           => $device->is_hub,
+                    'online'           => $state['data']['online'] ?? null,
+                    'temperature'      => AppSetting::convertTemp($rawTemp, 'c', $targetUnit),
+                    'temperature_unit' => $targetUnit,
+                    'state'            => $rawState,
+                    'reported_at'      => $state['data']['reportAt'] ?? null,
+                    'success'          => ($state['code'] ?? null) === '000000',
+                    'error'            => ($state['code'] ?? null) !== '000000'
+                        ? ($state['desc'] ?? 'Unknown error')
+                        : null,
+                ];
+
+                if ($device->is_hub) {
+                    $hub = $entry;
+                } else {
+                    $sensors[] = $entry;
+                }
             }
         }
 
@@ -104,27 +112,17 @@ class PublicStoreController extends Controller
         ]);
     }
 
-    /**
-     * Resolve the requested temperature unit from the query string.
-     * Accepts ?unit=c or ?unit=f (case-insensitive). Defaults to 'C'.
-     */
     private function resolveUnit(Request $request): string
     {
         $unit = strtoupper($request->input('unit', 'C'));
         return in_array($unit, ['C', 'F'], true) ? $unit : 'C';
     }
 
-    /**
-     * Resolve the correct getState method for a device type.
-     */
     private function resolveGetStateMethod(string $deviceType): string
     {
         return $deviceType . '.getState';
     }
 
-    /**
-     * Call the YoSmart API to get a device's state.
-     */
     private function fetchDeviceState(
         YoSmartService $service,
         string $method,

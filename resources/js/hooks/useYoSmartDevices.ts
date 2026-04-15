@@ -17,7 +17,7 @@ interface DeviceState {
   };
 }
 
-export function useYoSmartDevices(storeId: number) {
+export function useYoSmartDevices(credentialId: number) {
   const [devices, setDevices] = useState<Device[]>([]);
   const [homeId, setHomeId] = useState<string | null>(null);
   const [deviceStates, setDeviceStates] = useState<DeviceState>({});
@@ -33,7 +33,7 @@ export function useYoSmartDevices(storeId: number) {
       setLoading(true);
       setError(null);
 
-      const response = await fetchYoSmartDevices(storeId);
+      const response = await fetchYoSmartDevices(credentialId);
 
       if (response.success && response.devices) {
         setDevices(response.devices);
@@ -56,7 +56,7 @@ export function useYoSmartDevices(storeId: number) {
    */
   const loadHome = useCallback(async () => {
     try {
-      const response = await fetchYoSmartHome(storeId);
+      const response = await fetchYoSmartHome(credentialId);
 
       if (response.success && response.home) {
         setHomeId(response.home.homeId || response.home.id);
@@ -85,7 +85,7 @@ export function useYoSmartDevices(storeId: number) {
           },
         }));
 
-        const response = await getDeviceState(storeId, deviceId, deviceToken, deviceType);
+        const response = await getDeviceState(credentialId, deviceId, deviceToken, deviceType);
 
         if (response.success && response.state) {
           setDeviceStates(prev => ({
@@ -146,7 +146,7 @@ export function useYoSmartDevices(storeId: number) {
           },
         }));
 
-        const response = await controlDeviceAction(storeId, deviceId, deviceToken, method, params);
+        const response = await controlDeviceAction(credentialId, deviceId, deviceToken, method, params);
 
         if (response.success && response.data) {
           setDeviceStates(prev => ({
@@ -215,7 +215,7 @@ export function useYoSmartDevices(storeId: number) {
         return next;
       });
 
-      const response = await fetchAllDeviceStates(storeId);
+      const response = await fetchAllDeviceStates(credentialId);
 
       if (response.success && response.devices) {
         const next: DeviceState = {};
@@ -251,7 +251,7 @@ export function useYoSmartDevices(storeId: number) {
    * Initial load
    */
   useEffect(() => {
-    // Reset state when switching stores
+    // Reset state when switching credentials
     setDevices([]);
     setDeviceStates({});
     setHomeId(null);
@@ -259,7 +259,7 @@ export function useYoSmartDevices(storeId: number) {
     setError(null);
     loadDevices();
     loadHome();
-  }, [storeId, loadDevices, loadHome]);
+  }, [credentialId, loadDevices, loadHome]);
 
   /**
    * Get state for a specific device (from cache or loading state)

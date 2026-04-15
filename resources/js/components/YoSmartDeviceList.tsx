@@ -17,7 +17,6 @@ import {
   Signal,
 } from 'lucide-react';
 import { useYoSmartDevices } from '@/hooks/useYoSmartDevices';
-import { index as storesIndex } from '@/routes/stores';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -657,38 +656,38 @@ function DeviceCardDispatcher({
 
 // ─── Types ───────────────────────────────────────────────────────────
 
-interface StoreOption {
+interface CredentialOption {
   id: number;
-  store_name: string;
-  store_number: string;
-  yosmart_uaid?: string | null;
+  uaid: string;
+  is_active: boolean;
+  devices_count: number;
 }
 
-// ─── Store Selector ───────────────────────────────────────────────────
+// ─── Credential Selector ──────────────────────────────────────────────
 
-function StoreSelector({
-  stores,
+function CredentialSelector({
+  credentials,
   selectedId,
   onChange,
 }: {
-  stores: StoreOption[];
+  credentials: CredentialOption[];
   selectedId: number | null;
   onChange: (id: number) => void;
 }) {
   return (
     <div className="flex flex-wrap gap-2">
-      {stores.map((s) => (
+      {credentials.map((c) => (
         <button
-          key={s.id}
-          onClick={() => onChange(s.id)}
+          key={c.id}
+          onClick={() => onChange(c.id)}
           className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
-            selectedId === s.id
+            selectedId === c.id
               ? 'border-primary bg-primary text-primary-foreground'
               : 'border-border bg-background text-foreground hover:bg-muted'
           }`}
         >
-          {s.store_name}
-          <span className="ml-1.5 font-mono text-[11px] opacity-60">{s.store_number}</span>
+          {c.uaid}
+          <span className="ml-1.5 font-mono text-[11px] opacity-60">{c.devices_count} devices</span>
         </button>
       ))}
     </div>
@@ -701,35 +700,35 @@ export function YoSmartDeviceList() {
   const { temperatureUnit } = usePage().props;
   const targetUnit = temperatureUnit ?? 'F';
 
-  // ── Store selection ──
-  const [stores, setStores] = useState<StoreOption[]>([]);
-  const [storesLoading, setStoresLoading] = useState(true);
-  const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
+  // ── Credential selection ──
+  const [credentials, setCredentials] = useState<CredentialOption[]>([]);
+  const [credentialsLoading, setCredentialsLoading] = useState(true);
+  const [selectedCredentialId, setSelectedCredentialId] = useState<number | null>(null);
 
-  const loadStores = useCallback(async () => {
-    setStoresLoading(true);
+  const loadCredentials = useCallback(async () => {
+    setCredentialsLoading(true);
     try {
-      const res = await fetch(storesIndex.url(), {
+      const res = await fetch('/api/credentials', {
         headers: { Accept: 'application/json' },
         credentials: 'include',
       });
       const data = await res.json();
-      if (data.success && data.stores) {
-        const configured: StoreOption[] = data.stores.filter((s: StoreOption) => s.yosmart_uaid);
-        setStores(configured);
-        if (configured.length > 0) setSelectedStoreId(configured[0].id);
+      if (data.success && data.credentials) {
+        const active: CredentialOption[] = data.credentials.filter((c: CredentialOption) => c.is_active);
+        setCredentials(active);
+        if (active.length > 0) setSelectedCredentialId(active[0].id);
       }
     } catch {
       // silent
     } finally {
-      setStoresLoading(false);
+      setCredentialsLoading(false);
     }
   }, []);
 
-  useEffect(() => { loadStores(); }, [loadStores]);
+  useEffect(() => { loadCredentials(); }, [loadCredentials]);
 
-  // ── Guard: no stores configured ──
-  if (storesLoading) {
+  // ── Guard: no credentials configured ──
+  if (credentialsLoading) {
     return (
       <div className="space-y-6">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -742,35 +741,35 @@ export function YoSmartDeviceList() {
     );
   }
 
-  if (stores.length === 0) {
+  if (credentials.length === 0) {
     return (
       <Card>
         <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
           <WifiOff className="size-12 text-muted-foreground/30" />
           <p className="text-lg font-medium">No YoSmart credentials configured</p>
           <p className="text-sm text-muted-foreground">
-            Go to <a href="/stores" className="underline">Stores</a> and add YoSmart UAID & secret to at least one store.
+            Go to <a href="/stores" className="underline">Stores</a> and add YoSmart credentials to get started.
           </p>
         </CardContent>
       </Card>
     );
   }
 
-  if (!selectedStoreId) return null;
+  if (!selectedCredentialId) return null;
 
   return (
     <div className="space-y-4">
-      {stores.length > 1 && (
-        <StoreSelector stores={stores} selectedId={selectedStoreId} onChange={setSelectedStoreId} />
+      {credentials.length > 1 && (
+        <CredentialSelector credentials={credentials} selectedId={selectedCredentialId} onChange={setSelectedCredentialId} />
       )}
-      <StoreDeviceView storeId={selectedStoreId} targetUnit={targetUnit} />
+      <CredentialDeviceView credentialId={selectedCredentialId} targetUnit={targetUnit} />
     </div>
   );
 }
 
 // ─── Per-store device view ────────────────────────────────────────────
 
-function StoreDeviceView({ storeId, targetUnit }: { storeId: number; targetUnit: string }) {
+function CredentialDeviceView({ credentialId, targetUnit }: { credentialId: number; targetUnit: string }) {
   const {
     devices,
     deviceStates,
@@ -781,7 +780,7 @@ function StoreDeviceView({ storeId, targetUnit }: { storeId: number; targetUnit:
     fetchAllStates,
     getState,
     getDeviceStatus,
-  } = useYoSmartDevices(storeId);
+  } = useYoSmartDevices(credentialId);
 
   // Auto-fetch all states once devices are loaded
   useEffect(() => {

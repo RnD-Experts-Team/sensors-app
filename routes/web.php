@@ -22,8 +22,8 @@ Route::get('reports', [App\Http\Controllers\ReportController::class, 'index'])
     ->middleware(['auth', 'verified'])
     ->name('reports');
 
-// YoSmart API Routes (scoped per store)
-Route::middleware(['auth', 'verified'])->prefix('api/stores/{store}/yosmart')->group(function () {
+// YoSmart API Routes (scoped per credential)
+Route::middleware(['auth', 'verified'])->prefix('api/credentials/{credential}/yosmart')->group(function () {
     Route::get('/devices', [App\Http\Controllers\YoSmartController::class, 'listDevices'])->name('yosmart.devices.list');
     Route::get('/home', [App\Http\Controllers\YoSmartController::class, 'homeInfo'])->name('yosmart.home.info');
     Route::post('/device/state', [App\Http\Controllers\YoSmartController::class, 'deviceState'])->name('yosmart.device.state');
@@ -58,9 +58,17 @@ Route::middleware(['auth', 'verified'])->prefix('api/stores')->group(function ()
     Route::get('/{store}', [App\Http\Controllers\StoreController::class, 'show'])->name('stores.show');
     Route::put('/{store}', [App\Http\Controllers\StoreController::class, 'update'])->name('stores.update');
     Route::delete('/{store}', [App\Http\Controllers\StoreController::class, 'destroy'])->name('stores.destroy');
-    Route::get('/{store}/available-devices', [App\Http\Controllers\StoreController::class, 'availableDevices'])->name('stores.devices.available');
-    Route::post('/{store}/devices', [App\Http\Controllers\StoreController::class, 'linkDevices'])->name('stores.devices.link');
-    Route::delete('/{store}/devices/{device}', [App\Http\Controllers\StoreController::class, 'unlinkDevice'])->name('stores.devices.unlink');
+});
+
+// YoSmart Credential Management Routes (admin, behind auth)
+Route::middleware(['auth', 'verified'])->prefix('api/credentials')->group(function () {
+    Route::get('/', [App\Http\Controllers\YoSmartCredentialController::class, 'index'])->name('credentials.index');
+    Route::post('/', [App\Http\Controllers\YoSmartCredentialController::class, 'store'])->name('credentials.store');
+    Route::get('/{credential}', [App\Http\Controllers\YoSmartCredentialController::class, 'show'])->name('credentials.show');
+    Route::put('/{credential}', [App\Http\Controllers\YoSmartCredentialController::class, 'update'])->name('credentials.update');
+    Route::delete('/{credential}', [App\Http\Controllers\YoSmartCredentialController::class, 'destroy'])->name('credentials.destroy');
+    Route::post('/{credential}/sync', [App\Http\Controllers\YoSmartCredentialController::class, 'sync'])->name('credentials.sync');
+    Route::put('/{credential}/devices/{device}/assign', [App\Http\Controllers\YoSmartCredentialController::class, 'assignDevice'])->name('credentials.devices.assign');
 });
 
 require __DIR__.'/settings.php';

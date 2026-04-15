@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\SensorReport;
+use App\Models\YoSmartCredential;
 use App\Services\YoSmartService;
 use App\Models\SnapshotSchedule;
 use App\Models\Store;
@@ -20,7 +21,7 @@ class CaptureSnapshots extends Command
     protected $signature = 'snapshots:capture
                             {--force : Ignore schedule timing and run immediately}';
 
-    protected $description = 'Capture sensor snapshots for ALL active stores (global schedule)';
+    protected $description = 'Capture sensor snapshots for ALL active credentials (global schedule)';
 
     public function handle(): int
     {
@@ -36,12 +37,12 @@ class CaptureSnapshots extends Command
             return self::SUCCESS;
         }
 
-        $this->info('📡 Running global snapshot for all active stores…');
+        $this->info('📡 Running global snapshot for all active credentials…');
 
-        $stores = Store::where('is_active', true)->with('devices')->get();
+        $credentials = YoSmartCredential::where('is_active', true)->get();
 
-        if ($stores->isEmpty()) {
-            $this->warn('No active stores found.');
+        if ($credentials->isEmpty()) {
+            $this->warn('No active credentials found.');
             $schedule->markRanSuccessfully();
             return self::SUCCESS;
         }
@@ -50,22 +51,22 @@ class CaptureSnapshots extends Command
         $failed        = 0;
         $errors        = [];
 
-        foreach ($stores as $store) {
-            $this->line("  → {$store->store_name} ({$store->store_number})");
+        foreach ($credentials as $credential) {
+            $this->line("  → Credential: {$credential->uaid}");
 
             try {
-                $count = $this->captureForStore($store);
+                $count = $this->captureForCredential($credential);
                 $totalCaptured += $count;
                 $this->info("    ✅ {$count} device(s)");
             } catch (\Throwable $e) {
                 $failed++;
-                $errors[] = "{$store->store_name}: {$e->getMessage()}";
+                $errors[] = "{$credential->uaid}: {$e->getMessage()}";
                 $this->error("    ❌ {$e->getMessage()}");
             }
         }
 
         $this->newLine();
-        $this->info("Done — {$totalCaptured} total device(s) captured across {$stores->count()} stores.");
+        $this->info("Done — {$totalCaptured} total device(s) captured across {$credentials->count()} credential(s).");
 
         if ($failed > 0) {
             $schedule->markFailed(implode('; ', $errors));
@@ -76,21 +77,26 @@ class CaptureSnapshots extends Command
         return self::SUCCESS;
     }
 
-    private function captureForStore($store): int
+    private function captureForCredential(YoSmartCredential $credential): int
     {
-        if (empty($store->yosmart_uaid) || empty($store->yosmart_secret)) {
-            throw new \RuntimeException("Store has no YoSmart credentials configured.");
+        if (! $credential->hasCredentials()) {
+            throw new \RuntimeException("Credential has incomplete configuration.");
         }
 
         $service = new YoSmartService(
-            uaid:    $store->yosmart_uaid,
-            secret:  $store->yosmart_secret,
-            storeId: $store->id,
+            uaid:         $credential->uaid,
+            secret:       $credential->secret,
+            credentialId: $credential->id,
         );
+
+        // Only capture for devices that have a store assigned (non-hub, linked)
+        $devices = StoreDevice::where('credential_id', $credential->id)
+            ->whereNotNull('store_id')
+            ->get();
 
         $count = 0;
 
-        foreach ($store->devices as $device) {
+        foreach ($devices as $device) {
             /** @var StoreDevice $device */
             $method = $device->device_type . '.getState';
 
@@ -104,7 +110,7 @@ class CaptureSnapshots extends Command
             $state   = $data['state'] ?? [];
 
             SensorReport::create([
-                'store_id'         => $store->id,
+                'store_id'         => $device->store_id,
                 'store_device_id'  => $device->id,
                 'device_id'        => $device->device_id,
                 'device_type'      => $device->device_type,

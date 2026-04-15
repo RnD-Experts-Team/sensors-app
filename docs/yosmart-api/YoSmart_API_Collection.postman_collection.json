@@ -1,0 +1,1909 @@
+{
+	"info": {
+		"_postman_id": "yosmart-api-v2-complete",
+		"name": "YoSmart / YoLink API V2 - Complete Collection",
+		"description": "# YoSmart Open API V2 - Complete Postman Collection\n\nComprehensive collection covering **all** YoSmart API V2 endpoints.\n\n## Authentication\n- Uses OAuth 2.0 Client Credentials flow (UAC)\n- Access tokens expire in 3600 seconds (1 hour)\n- Refresh tokens before expiration\n\n## API Architecture\n- **NOT RESTful** — uses JSON-RPC style with a single POST endpoint\n- All device API calls go to the same endpoint, differentiated by `method` field\n- Data packets: BDDP (request) / BUDP (response)\n\n## Setup Instructions\n1. Set `uaid` and `secret_key` in the **Environment Variables**\n2. Run **\"Get Access Token\"** request first — it auto-saves the token\n3. All subsequent requests use the saved `access_token` automatically\n\n## Environments\nImport the included environment and fill in your UAC credentials.\n\n## Rate Limits\n- MQTT: Max 5 concurrent connections, 10 new connections per 5 minutes\n- HTTP: Follow exponential backoff on 010301 errors\n\n---\n**Documentation**: https://doc.yosmart.com/docs/overall/intro\n**Support**: service@yosmart.com | yaochi@yosmart.com",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{access_token}}",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Auto-set timestamp for all requests",
+					"pm.variables.set('timestamp', Date.now());",
+					"",
+					"// Auto-refresh token if expired",
+					"const tokenExpiry = pm.environment.get('token_expiry');",
+					"if (tokenExpiry && Date.now() > parseInt(tokenExpiry)) {",
+					"    console.log('Access token expired, refreshing...');",
+					"    const refreshToken = pm.environment.get('refresh_token');",
+					"    const uaid = pm.environment.get('uaid');",
+					"    if (refreshToken && uaid) {",
+					"        pm.sendRequest({",
+					"            url: pm.environment.get('token_url') || 'https://api.yosmart.com/open/yolink/token',",
+					"            method: 'POST',",
+					"            header: { 'Content-Type': 'application/x-www-form-urlencoded' },",
+					"            body: {",
+					"                mode: 'urlencoded',",
+					"                urlencoded: [",
+					"                    { key: 'grant_type', value: 'refresh_token' },",
+					"                    { key: 'client_id', value: uaid },",
+					"                    { key: 'refresh_token', value: refreshToken }",
+					"                ]",
+					"            }",
+					"        }, (err, res) => {",
+					"            if (!err && res.code === 200) {",
+					"                const data = res.json();",
+					"                pm.environment.set('access_token', data.access_token);",
+					"                pm.environment.set('refresh_token', data.refresh_token);",
+					"                pm.environment.set('token_expiry', String(Date.now() + (data.expires_in * 1000) - 300000));",
+					"                console.log('Token refreshed successfully');",
+					"            }",
+					"        });",
+					"    }",
+					"}"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Global test: check response structure",
+					"pm.test('Response has valid BUDP structure', function () {",
+					"    const json = pm.response.json();",
+					"    pm.expect(json).to.have.property('code');",
+					"    pm.expect(json).to.have.property('time');",
+					"});",
+					"",
+					"pm.test('API call was successful', function () {",
+					"    const json = pm.response.json();",
+					"    pm.expect(json.code).to.eql('000000');",
+					"});"
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "https://api.yosmart.com"
+		},
+		{
+			"key": "api_path",
+			"value": "/open/yolink/v2/api"
+		},
+		{
+			"key": "token_path",
+			"value": "/open/yolink/token"
+		},
+		{
+			"key": "production_path",
+			"value": "/open/production/v2/api"
+		}
+	],
+	"item": [
+		{
+			"name": "🔐 Authentication",
+			"description": "OAuth 2.0 token management — get, refresh, and validate access tokens.",
+			"item": [
+				{
+					"name": "Get Access Token (Client Credentials)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Token received successfully', function () {",
+									"    pm.response.to.have.status(200);",
+									"    const json = pm.response.json();",
+									"    pm.expect(json).to.have.property('access_token');",
+									"    pm.expect(json).to.have.property('refresh_token');",
+									"    pm.expect(json).to.have.property('expires_in');",
+									"    pm.expect(json).to.have.property('token_type');",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"if (json.access_token) {",
+									"    pm.environment.set('access_token', json.access_token);",
+									"    pm.environment.set('refresh_token', json.refresh_token);",
+									"    pm.environment.set('token_type', json.token_type);",
+									"    pm.environment.set('token_expiry', String(Date.now() + (json.expires_in * 1000) - 300000));",
+									"    console.log('✅ Access token saved. Expires in ' + json.expires_in + ' seconds.');",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/x-www-form-urlencoded"
+							}
+						],
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"description": "OAuth 2.0 grant type"
+								},
+								{
+									"key": "client_id",
+									"value": "{{uaid}}",
+									"description": "Your UAC ID (UAID)"
+								},
+								{
+									"key": "client_secret",
+									"value": "{{secret_key}}",
+									"description": "Your UAC Secret Key"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}{{token_path}}",
+							"host": ["{{base_url}}{{token_path}}"],
+							"path": []
+						},
+						"description": "Obtain an access token using UAC client credentials.\n\n**Response Fields:**\n- `access_token` — JWT bearer token (valid ~1 hour)\n- `refresh_token` — Use to get new access_token without re-authenticating\n- `expires_in` — Token lifetime in seconds\n- `token_type` — Always \"Bearer\"\n\n⚠️ **Run this first** before any other request."
+					}
+				},
+				{
+					"name": "Refresh Access Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Token refreshed successfully', function () {",
+									"    pm.response.to.have.status(200);",
+									"    const json = pm.response.json();",
+									"    pm.expect(json).to.have.property('access_token');",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"if (json.access_token) {",
+									"    pm.environment.set('access_token', json.access_token);",
+									"    pm.environment.set('refresh_token', json.refresh_token);",
+									"    pm.environment.set('token_expiry', String(Date.now() + (json.expires_in * 1000) - 300000));",
+									"    console.log('✅ Token refreshed and saved.');",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/x-www-form-urlencoded"
+							}
+						],
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "refresh_token",
+									"description": "OAuth 2.0 grant type for refresh"
+								},
+								{
+									"key": "client_id",
+									"value": "{{uaid}}",
+									"description": "Your UAC ID (UAID)"
+								},
+								{
+									"key": "refresh_token",
+									"value": "{{refresh_token}}",
+									"description": "Refresh token from previous auth response"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}{{token_path}}",
+							"host": ["{{base_url}}{{token_path}}"],
+							"path": []
+						},
+						"description": "Refresh an expired access token using the refresh_token.\n\n**Best Practice:** Call this before the access_token expires (check `expires_in`).\n\nThe collection's pre-request script handles this automatically."
+					}
+				}
+			]
+		},
+		{
+			"name": "🏠 Home",
+			"description": "Home-level operations — device listing, home info. These are UAC-compatible methods.",
+			"item": [
+				{
+					"name": "Get Device List",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Device list retrieved', function () {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.code).to.eql('000000');",
+									"    pm.expect(json.data).to.have.property('devices');",
+									"    pm.expect(json.data.devices).to.be.an('array');",
+									"});",
+									"",
+									"// Auto-save first device for convenience",
+									"const json = pm.response.json();",
+									"if (json.data && json.data.devices && json.data.devices.length > 0) {",
+									"    const firstDevice = json.data.devices[0];",
+									"    pm.environment.set('device_id', firstDevice.deviceId);",
+									"    pm.environment.set('device_token', firstDevice.token);",
+									"    pm.environment.set('device_type', firstDevice.type);",
+									"    pm.environment.set('device_name', firstDevice.name);",
+									"    console.log('✅ Saved first device: ' + firstDevice.name + ' (' + firstDevice.type + ')');",
+									"    console.log('📋 Total devices: ' + json.data.devices.length);",
+									"    ",
+									"    // Save all devices for reference",
+									"    pm.environment.set('all_devices', JSON.stringify(json.data.devices));",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Home.getDeviceList\",\n    \"time\": {{timestamp}}\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get the complete list of devices associated with your UAC account.\n\n**Response per device:**\n- `deviceId` — Unique device identifier\n- `deviceUDID` — Device unique ID\n- `name` — User-friendly name\n- `token` — Net token (required for device control)\n- `type` — Device type (e.g., Hub, THSensor, DoorSensor)\n- `modelName` — Model number\n- `parentDeviceId` — Parent device (if applicable)\n\n🔄 First device is auto-saved to environment variables."
+					}
+				},
+				{
+					"name": "Get General Info (Home ID)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Home info retrieved', function () {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.code).to.eql('000000');",
+									"    pm.expect(json.data).to.have.property('id');",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"if (json.data && json.data.id) {",
+									"    pm.environment.set('home_id', json.data.id);",
+									"    console.log('✅ Home ID saved: ' + json.data.id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Home.getGeneralInfo\",\n    \"time\": {{timestamp}}\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get general info about the home, including the **Home ID**.\n\nThe Home ID is required for MQTT topic subscriptions:\n- `yl-home/${Home ID}/+/report` — Device events\n- `yl-home/${Home ID}/**/request` — Send requests\n- `yl-home/${Home ID}/+/response` — Receive responses\n\n🔄 Home ID is auto-saved to environment."
+					}
+				}
+			]
+		},
+		{
+			"name": "📡 Hub",
+			"description": "YoLink Hub management — state monitoring and WiFi configuration.",
+			"item": [
+				{
+					"name": "Get Hub State",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Hub.getState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{hub_device_id}}\",\n        \"token\": \"{{hub_device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get the current state of a YoLink Hub.\n\n**Response:**\n- `data.version` — Hub firmware version\n- `data.wifi.enable` — WiFi connected\n- `data.wifi.ssid` — Connected WiFi network\n- `data.wifi.ip` — Current IP address\n- `data.wifi.gateway` — Gateway address\n- `data.wifi.mask` — Subnet mask\n- `data.eth.enable` — Ethernet connected"
+					}
+				},
+				{
+					"name": "Set Hub WiFi",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Hub.setWiFi\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{hub_device_id}}\",\n        \"token\": \"{{hub_device_token}}\"\n    },\n    \"params\": {\n        \"ssid\": \"YourWiFiName\",\n        \"password\": \"YourWiFiPassword\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Set the WiFi configuration for a Hub when it is online.\n\n⚠️ **Warning:** This will change the Hub's WiFi connection. Make sure the new WiFi is accessible.\n\n**Parameters:**\n- `ssid` — WiFi network name\n- `password` — WiFi password"
+					}
+				}
+			]
+		},
+		{
+			"name": "🌡️ THSensor (Temperature & Humidity)",
+			"description": "Temperature & Humidity Sensor operations — state, logs, and metrics.",
+			"item": [
+				{
+					"name": "Get TH Sensor State",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('THSensor state retrieved', function () {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.code).to.eql('000000');",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"if (json.data && json.data.state) {",
+									"    console.log('🌡️ Temperature: ' + json.data.state.temperature + '°C');",
+									"    console.log('💧 Humidity: ' + json.data.state.humidity + '%');",
+									"    console.log('🔋 Battery: ' + json.data.state.battery + '/4');",
+									"    console.log('📶 Online: ' + json.data.online);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"THSensor.getState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get the current state of a Temperature & Humidity sensor.\n\n**Response:**\n- `data.online` — Device online status\n- `data.state.temperature` — Current temperature (°C)\n- `data.state.humidity` — Current humidity (%)\n- `data.state.battery` — Battery level (0-4)\n- `data.state.state` — State [\"normal\", \"alert\"]\n- `data.state.alarm` — Alarm states (lowBattery, lowTemp, highTemp, lowHumidity, highHumidity)\n- `data.state.tempLimit` — Temperature alert range (min/max)\n- `data.state.humidityLimit` — Humidity alert range (min/max)\n- `data.state.tempCorrection` — Temperature calibration offset\n- `data.state.humidityCorrection` — Humidity calibration offset"
+					}
+				},
+				{
+					"name": "Get TH Sensor Activity Logs",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"THSensor.getActivityLogs\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"search\": {\n            \"startDate\": \"2025-01-01\",\n            \"endDate\": \"2025-12-31\"\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Retrieve activity logs for a TH Sensor within a date range.\n\n⚠️ Requires `DEVICE.HISTORICAL_DATA.READ` permission.\n\n**Params:**\n- `search.startDate` — Start date (YYYY-MM-DD)\n- `search.endDate` — End date (YYYY-MM-DD)\n- `retrievalKey` — Pagination key for next page\n\n**Response:**\n- `data.logs[].id` — Record ID\n- `data.logs[].time` — Timestamp\n- `data.logs[].data` — Record data\n- `data.retrievalKeys.next` — Key for next page"
+					}
+				},
+				{
+					"name": "Get TH Sensor Activity Logs (Paginated)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"THSensor.getActivityLogs\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"retrievalKey\": \"{{retrieval_key}}\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Retrieve next page of activity logs using a retrieval key from previous response."
+					}
+				},
+				{
+					"name": "Get TH Sensor Metrics Logs",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"THSensor.getMetricsLogs\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"search\": {\n            \"startDate\": \"2025-01-01\",\n            \"endDate\": \"2025-12-31\"\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Retrieve metrics logs (temperature/humidity data points) for charting.\n\n⚠️ Requires `DEVICE.HISTORICAL_DATA.READ` permission.\n\n**Response:**\n- `data.logs[].time` — Timestamp\n- `data.logs[].*` — Metric values"
+					}
+				}
+			]
+		},
+		{
+			"name": "🚪 DoorSensor",
+			"description": "Door/window sensor operations — state, attributes, and activity logs.",
+			"item": [
+				{
+					"name": "Get Door Sensor State",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('DoorSensor state retrieved', function () {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.code).to.eql('000000');",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"if (json.data && json.data.state) {",
+									"    console.log('🚪 State: ' + json.data.state.state);",
+									"    console.log('🔋 Battery: ' + json.data.state.battery + '/4');",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"DoorSensor.getState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get the current state of a Door Sensor.\n\n**Response:**\n- `data.state.state` — [\"closed\", \"open\", \"error\"]\n- `data.state.battery` — Battery level (0-4)\n- `data.state.openRemindDelay` — Open reminder delay\n- `data.state.alertInterval` — Alert interval\n- `data.state.stateChangedAt` — Last state change time"
+					}
+				},
+				{
+					"name": "Set Door Sensor Attributes",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"DoorSensor.setAttributes\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"openRemindDelay\": 300,\n        \"alertInterval\": 30\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Set door sensor attributes.\n\n**Parameters:**\n- `openRemindDelay` — Open remind delay in seconds [10-64800]\n- `alertInterval` — Alert interval in minutes [0-120]"
+					}
+				},
+				{
+					"name": "Get Door Sensor Activity Logs",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"DoorSensor.getActivityLogs\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"search\": {\n            \"startDate\": \"2025-01-01\",\n            \"endDate\": \"2025-12-31\"\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get activity logs for a door sensor.\n\n⚠️ Requires `DEVICE.HISTORICAL_DATA.READ` permission."
+					}
+				}
+			]
+		},
+		{
+			"name": "🏃 MotionSensor",
+			"description": "Motion sensor operations — state, attributes, and activity logs.",
+			"item": [
+				{
+					"name": "Get Motion Sensor State",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"MotionSensor.getState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get the current state of a Motion Sensor.\n\n**Response:**\n- `data.state.state` — [\"normal\", \"alert\"]\n- `data.state.battery` — Battery level (0-4)\n- `data.state.devTemperature` — Device temperature\n- `data.state.sensitivity` — Sensitivity level\n- `data.state.sensorMode` — Operating mode\n- `data.state.beep` — Alarm sounding\n- `data.state.alertStandby` — Alert standby state\n- `data.state.stateChangedAt` — Last state change"
+					}
+				},
+				{
+					"name": "Set Motion Sensor Attributes",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"MotionSensor.setAttributes\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"alertInterval\": 5,\n        \"ledAlarm\": true,\n        \"nomotionDelay\": 30,\n        \"sensitivity\": 2\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Set motion sensor attributes.\n\n**Parameters:**\n- `alertInterval` — Alert interval in minutes\n- `ledAlarm` — Enable/disable LED alarm\n- `nomotionDelay` — No-motion delay in minutes [0-120]\n- `sensitivity` — Detection sensitivity [1-3]"
+					}
+				},
+				{
+					"name": "Get Motion Sensor Activity Logs",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"MotionSensor.getActivityLogs\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"search\": {\n            \"startDate\": \"2025-01-01\",\n            \"endDate\": \"2025-12-31\"\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get activity logs for a motion sensor.\n\n⚠️ Requires `DEVICE.HISTORICAL_DATA.READ` permission."
+					}
+				}
+			]
+		},
+		{
+			"name": "💧 LeakSensor",
+			"description": "Water leak sensor operations — state, settings, and activity logs.",
+			"item": [
+				{
+					"name": "Get Leak Sensor State",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"LeakSensor.getState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get the current state of a Leak Sensor.\n\n**Response:**\n- `data.state.state` — [\"normal\", \"alert\"]\n- `data.state.battery` — Battery level (0-4)\n- `data.state.devTemperature` — Temperature\n- `data.state.sensitivity` — Sensitivity level\n- `data.state.sensorMode` — [\"WaterPeak\", \"WaterLeak\"]\n- `data.state.beep` — Alarm sounding"
+					}
+				},
+				{
+					"name": "Set Leak Sensor Settings",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"LeakSensor.setSettings\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"interval\": 5,\n        \"beep\": true,\n        \"sensorMode\": \"WaterLeak\",\n        \"sensitivity\": \"high\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Configure leak sensor settings.\n\n**Parameters:**\n- `interval` — Continuous alarm interval (minutes)\n- `beep` — Enable/disable beep on alert\n- `sensorMode` — [\"WaterPeak\", \"WaterLeak\"]\n- `sensitivity` — [\"low\", \"high\"]"
+					}
+				},
+				{
+					"name": "Get Leak Sensor Activity Logs",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"LeakSensor.getActivityLogs\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"search\": {\n            \"startDate\": \"2025-01-01\",\n            \"endDate\": \"2025-12-31\"\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get activity logs for a leak sensor.\n\n⚠️ Requires `DEVICE.HISTORICAL_DATA.READ` permission."
+					}
+				}
+			]
+		},
+		{
+			"name": "📳 VibrationSensor",
+			"description": "Vibration sensor operations — state monitoring.",
+			"item": [
+				{
+					"name": "Get Vibration Sensor State",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"VibrationSensor.getState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get the current state of a Vibration Sensor.\n\n**Response:**\n- `data.state.state` — [\"normal\", \"alert\"]\n- `data.state.battery` — Battery level (0-4)\n- `data.state.alertInterval` — Alert interval\n- `data.state.noVibrationDelay` — No-vibration delay"
+					}
+				}
+			]
+		},
+		{
+			"name": "🔌 Outlet",
+			"description": "Smart outlet/plug operations — state, control, scheduling, and firmware.",
+			"item": [
+				{
+					"name": "Get Outlet State",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const json = pm.response.json();",
+									"if (json.data) {",
+									"    console.log('🔌 State: ' + json.data.state);",
+									"    console.log('⚡ Power: ' + (json.data.power || 'N/A') + 'W');",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Outlet.getState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get the current state of an Outlet.\n\n**Response:**\n- `data.state` — [\"closed\", \"open\"]\n- `data.delay.on` — Delay ON remaining (minutes)\n- `data.delay.off` — Delay OFF remaining (minutes)\n- `data.power` — Current power consumption (watts)\n- `data.version` — Firmware version"
+					}
+				},
+				{
+					"name": "Set Outlet State (Turn ON)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Outlet.setState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"state\": \"open\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Turn an outlet ON.\n\n**Parameters:**\n- `state` — [\"open\", \"close\"]"
+					}
+				},
+				{
+					"name": "Set Outlet State (Turn OFF)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Outlet.setState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"state\": \"close\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Turn an outlet OFF."
+					}
+				},
+				{
+					"name": "Set Outlet Delay",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Outlet.setDelay\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"delayOn\": 30,\n        \"delayOff\": 0\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Set delay ON/OFF for an outlet.\n\n**Parameters:**\n- `delayOn` — Minutes until ON (0 = cancel)\n- `delayOff` — Minutes until OFF (0 = cancel)"
+					}
+				},
+				{
+					"name": "Get Outlet Schedules",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Outlet.getSchedules\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get the schedule list for an outlet.\n\n**Response per schedule:**\n- `isValid` — Enabled/disabled\n- `index` — Schedule index (0-5)\n- `on` — Turn on time (HH:mm)\n- `off` — Turn off time (HH:mm)\n- `week` — Bitmask of active days (Sun-Sat)"
+					}
+				},
+				{
+					"name": "Set Outlet Schedules",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Outlet.setSchedules\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"sches\": [\n            {\n                \"isValid\": true,\n                \"index\": 0,\n                \"on\": \"08:00\",\n                \"off\": \"22:00\",\n                \"week\": 127\n            }\n        ]\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Set schedules for an outlet (max 6 schedules, index 0-5).\n\n**Week bitmask:** 127 = all days (1111111 binary, Sun-Sat)"
+					}
+				},
+				{
+					"name": "Get Outlet Firmware Version",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Outlet.getVersion\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get firmware info for an outlet.\n\n**Response:**\n- `data.version` — Current firmware version\n- `data.newVersion.versionId` — Latest version ID\n- `data.newVersion.versionCode` — Latest version code\n- `data.newVersion.fileSize` — Update file size"
+					}
+				},
+				{
+					"name": "Start Outlet Firmware Upgrade",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Outlet.startUpgrade\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"versionId\": \"{{version_id}}\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Start a firmware upgrade on an outlet.\n\n⚠️ Get the `versionId` from `Outlet.getVersion` first."
+					}
+				},
+				{
+					"name": "Get Outlet Activity Logs",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Outlet.getActivityLogs\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"search\": {\n            \"startDate\": \"2025-01-01\",\n            \"endDate\": \"2025-12-31\"\n        }\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}{{api_path}}",
+							"host": ["{{base_url}}{{api_path}}"],
+							"path": []
+						},
+						"description": "Get activity logs for an outlet.\n\n⚠️ Requires `DEVICE.HISTORICAL_DATA.READ` permission."
+					}
+				}
+			]
+		},
+		{
+			"name": "💡 Switch",
+			"description": "Smart switch operations — state, control, scheduling, attributes, and firmware.",
+			"item": [
+				{
+					"name": "Get Switch State",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Switch.getState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get the current state of a Switch.\n\n**Response:**\n- `data.state` — [\"closed\", \"open\"]\n- `data.delay.on/off` — Delay timers (minutes)\n- `data.version` — Firmware version\n- `data.tz` — Timezone (-12 to 12)"
+					}
+				},
+				{
+					"name": "Set Switch State",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Switch.setState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"state\": \"open\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set switch state.\n\n**Parameters:** `state` — [\"open\", \"close\"]"
+					}
+				},
+				{
+					"name": "Set Switch Delay",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Switch.setDelay\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"delayOn\": 30,\n        \"delayOff\": 0\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set delay ON/OFF for a switch.\n\n- `delayOn` — Minutes until ON (0 = cancel)\n- `delayOff` — Minutes until OFF (0 = cancel)"
+					}
+				},
+				{
+					"name": "Get Switch Schedules",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Switch.getSchedules\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get schedule list for a switch."
+					}
+				},
+				{
+					"name": "Set Switch Schedules",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Switch.setSchedules\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"sches\": [\n            {\n                \"isValid\": true,\n                \"index\": 0,\n                \"on\": \"07:00\",\n                \"off\": \"23:00\",\n                \"week\": 127\n            }\n        ]\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set schedules for a switch (index 0-5)."
+					}
+				},
+				{
+					"name": "Set Switch Device Attributes",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Switch.setDeviceAttributes\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"led\": {\n            \"status\": \"on\"\n        }\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set switch attributes.\n\n**Parameters:**\n- `led.status` — Status LED [\"on\", \"off\"]"
+					}
+				},
+				{
+					"name": "Get Switch Firmware Version",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Switch.getVersion\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get firmware info for a switch."
+					}
+				},
+				{
+					"name": "Start Switch Firmware Upgrade",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Switch.startUpgrade\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"versionId\": \"{{version_id}}\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Start firmware upgrade on a switch."
+					}
+				},
+				{
+					"name": "Get Switch Activity Logs",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Switch.getActivityLogs\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"search\": {\n            \"startDate\": \"2025-01-01\",\n            \"endDate\": \"2025-12-31\"\n        }\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get activity logs for a switch.\n\n⚠️ Requires `DEVICE.HISTORICAL_DATA.READ` permission."
+					}
+				}
+			]
+		},
+		{
+			"name": "🔧 Manipulator (Valve Controller)",
+			"description": "Manipulator/valve operations — state, control, scheduling, and firmware.",
+			"item": [
+				{
+					"name": "Get Manipulator State",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manipulator.getState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get the current state of a Manipulator.\n\n**Response:**\n- `data.state` — [\"closed\", \"open\"]\n- `data.delay.on/off` — Delay timers\n- `data.openRemind` — Open reminder time (0 = disabled)"
+					}
+				},
+				{
+					"name": "Set Manipulator State",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manipulator.setState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"state\": \"open\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set manipulator state.\n\n**Parameters:** `state` — [\"open\", \"close\"]"
+					}
+				},
+				{
+					"name": "Set Manipulator Delay",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manipulator.setDelay\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"delayOn\": 0,\n        \"delayOff\": 60\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set delay ON/OFF for a manipulator."
+					}
+				},
+				{
+					"name": "Get Manipulator Schedules",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manipulator.getSchedules\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get schedule list for a manipulator."
+					}
+				},
+				{
+					"name": "Set Manipulator Schedules",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manipulator.setSchedules\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"sches\": [\n            {\n                \"isValid\": true,\n                \"index\": 0,\n                \"on\": \"06:00\",\n                \"off\": \"18:00\",\n                \"week\": 127\n            }\n        ]\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set schedules for a manipulator (index 0-5)."
+					}
+				},
+				{
+					"name": "Get Manipulator Firmware Version",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manipulator.getVersion\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get firmware info for a manipulator."
+					}
+				},
+				{
+					"name": "Start Manipulator Firmware Upgrade",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manipulator.startUpgrade\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"versionId\": \"{{version_id}}\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Start firmware upgrade on a manipulator."
+					}
+				},
+				{
+					"name": "Get Manipulator Activity Logs",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manipulator.getActivityLogs\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"search\": {\n            \"startDate\": \"2025-01-01\",\n            \"endDate\": \"2025-12-31\"\n        }\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get activity logs for a manipulator.\n\n⚠️ Requires `DEVICE.HISTORICAL_DATA.READ` permission."
+					}
+				}
+			]
+		},
+		{
+			"name": "🚨 Siren",
+			"description": "Siren/alarm operations — state monitoring and control.",
+			"item": [
+				{
+					"name": "Get Siren State",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Siren.getState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get the current state of a Siren.\n\n**Response:**\n- `data.state` — [\"normal\", \"alert\", \"off\"]\n- `data.soundLevel` — Volume level\n- `data.battery` — Battery level\n- `data.powerSupply` — [\"battery\", \"usb\"]\n- `data.alarmDuation` — Alert duration"
+					}
+				},
+				{
+					"name": "Set Siren State (Start Alert)",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Siren.setState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"state\": {\n            \"alarm\": true\n        }\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Start siren alert.\n\n**Parameters:** `state.alarm` — `true` = start, `false` = stop"
+					}
+				},
+				{
+					"name": "Set Siren State (Stop Alert)",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Siren.setState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"state\": {\n            \"alarm\": false\n        }\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Stop siren alert."
+					}
+				}
+			]
+		},
+		{
+			"name": "🔒 Lock",
+			"description": "Smart lock operations — state, passwords, OTP, and firmware.",
+			"item": [
+				{
+					"name": "Fetch Lock State (Cached)",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Lock.fetchState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Fetch the newest status of the lock from **cache** (faster).\n\n**Response:**\n- `data.state.state` — [\"locked\", \"unlocked\"]\n- `data.state.battery` — Battery level (0-4)"
+					}
+				},
+				{
+					"name": "Get Lock State (Live)",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Lock.getState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get the newest status directly from the lock **device** (slower but real-time)."
+					}
+				},
+				{
+					"name": "List Lock Passwords",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Lock.listPasswords\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"limit\": 10,\n        \"offset\": 0\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "List passwords stored on the lock.\n\n**Parameters:**\n- `limit` — Page size (max 10)\n- `offset` — Offset for pagination"
+					}
+				},
+				{
+					"name": "Generate One-Time Password (OTP)",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Lock.generateOTP\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"pwd\": \"1234\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Generate a one-time password for the lock.\n\n**Parameters:** `pwd` — 4-digit OTP (must match `/^\\d{4}$/`)"
+					}
+				},
+				{
+					"name": "Add Lock Password",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Lock.addPassword\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"pwd\": \"12345678\",\n        \"start\": 1704067200000,\n        \"end\": 1735689600000\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Add a new password to the lock.\n\n**Parameters:**\n- `pwd` — Password (4-8 digits, regex: `/^\\d{4,8}$/`)\n- `start` — Activation timestamp (ms)\n- `end` — Expiration timestamp (ms)"
+					}
+				},
+				{
+					"name": "Update Lock Password",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Lock.updatePassword\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"oldPwd\": \"12345678\",\n        \"pwd\": \"87654321\",\n        \"start\": 1704067200000,\n        \"end\": 1735689600000\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Update an existing lock password.\n\n- `oldPwd` — Current password (or index)\n- `pwd` — New password (4-8 digits)\n- `start/end` — New validity period"
+					}
+				},
+				{
+					"name": "Delete Lock Password",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Lock.delPassword\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"pwd\": \"12345678\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Delete a specific password from the lock.\n\n- `pwd` — Password or index to delete"
+					}
+				},
+				{
+					"name": "Clear All Lock Passwords",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Lock.clearPassword\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "⚠️ **Destructive:** Clear ALL passwords from the lock."
+					}
+				},
+				{
+					"name": "Get Lock Firmware Version",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Lock.getVersion\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get firmware info for a lock."
+					}
+				},
+				{
+					"name": "Start Lock Firmware Upgrade",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Lock.startUpgrade\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"versionId\": \"{{version_id}}\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Start firmware upgrade on a lock."
+					}
+				}
+			]
+		},
+		{
+			"name": "🌡️ Thermostat",
+			"description": "Thermostat operations — state, control, schedules, ECO, properties, correction, and firmware.",
+			"item": [
+				{
+					"name": "Get Thermostat State",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const json = pm.response.json();",
+									"if (json.data && json.data.state) {",
+									"    console.log('🌡️ Temp: ' + json.data.state.temperature + '°C');",
+									"    console.log('💧 Humidity: ' + json.data.state.humidity + '%');",
+									"    console.log('🔄 Mode: ' + json.data.state.mode);",
+									"    console.log('💨 Fan: ' + json.data.state.fan);",
+									"    console.log('⚡ Running: ' + json.data.state.running);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Thermostat.getState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get the full state of a thermostat.\n\n**Response includes:**\n- `state.temperature/humidity` — Current readings\n- `state.mode` — [\"cool\", \"heat\", \"auto\", \"off\"]\n- `state.fan` — [\"on\", \"auto\"]\n- `state.sche` — [\"run\", \"hold\"]\n- `state.running` — [\"cool\", \"heat\", \"idle\"]\n- `state.lowTemp/highTemp` — Set points\n- `properties.*` — Runtime limits, AUX settings\n- `eco.*` — ECO configuration"
+					}
+				},
+				{
+					"name": "Set Thermostat State",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Thermostat.setState\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"mode\": \"cool\",\n        \"fan\": \"auto\",\n        \"lowTemp\": 20.0,\n        \"highTemp\": 25.0,\n        \"sche\": \"hold\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set thermostat state.\n\n**Parameters (all optional):**\n- `mode` — [\"cool\", \"heat\", \"auto\", \"off\"]\n- `fan` — [\"on\", \"auto\"]\n- `lowTemp` — Lower set point (°C)\n- `highTemp` — Upper set point (°C)\n- `sche` — [\"run\", \"hold\"]"
+					}
+				},
+				{
+					"name": "Get Thermostat Schedules",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Thermostat.getSchedules\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get thermostat schedules.\n\n**Response:** 7 weekdays × 4 time points each with time, lowTemp, highTemp."
+					}
+				},
+				{
+					"name": "Set Thermostat Schedules",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Thermostat.setSchedules\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"sches\": [\n            [\n                {\"time\": \"06:00\", \"lowTemp\": 20.0, \"highTemp\": 24.0},\n                {\"time\": \"08:00\", \"lowTemp\": 18.0, \"highTemp\": 26.0},\n                {\"time\": \"18:00\", \"lowTemp\": 20.0, \"highTemp\": 24.0},\n                {\"time\": \"22:00\", \"lowTemp\": 18.0, \"highTemp\": 22.0}\n            ]\n        ]\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set thermostat schedules.\n\n**Structure:** Array of weekdays (Mon-Sat), each with 4 continuous time points."
+					}
+				},
+				{
+					"name": "Set Thermostat Timezone",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Thermostat.setTimeZone\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"tz\": -5\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set timezone for thermostat (required for schedules).\n\n**Parameters:** `tz` — Timezone offset (-12 to +12)"
+					}
+				},
+				{
+					"name": "Set Thermostat ECO",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Thermostat.setECO\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"mode\": \"on\",\n        \"lowTemp\": 2.0,\n        \"highTemp\": 2.0\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set ECO mode for thermostat.\n\n**Parameters:**\n- `mode` — [\"on\", \"off\"]\n- `lowTemp` — Lower adjustment (0-5°C)\n- `highTemp` — Upper adjustment (0-5°C)"
+					}
+				},
+				{
+					"name": "Set Thermostat Properties",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Thermostat.setProperties\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"minRuntime\": 5,\n        \"coolLimit\": 16.0,\n        \"heatLimit\": 32.0,\n        \"mute\": false,\n        \"menuLock\": false,\n        \"master\": \"local\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set thermostat runtime properties.\n\n**Parameters (all optional):**\n- `minRuntime` — Min cooling/heating runtime\n- `coolLimit` — Min cooling temp (°C)\n- `heatLimit` — Max heating temp (°C)\n- `mute` — Mute device\n- `menuLock` — Lock menu\n- `auxStandby/auxMaxSpan/auxThreshold` — AUX heater settings\n- `stage2Standby/stage2MaxSpan/stage2Threshold` — 2nd stage settings\n- `master` — Temp source [\"local\", \"sensor1\", \"sensor2\"]"
+					}
+				},
+				{
+					"name": "Set Thermostat Correction",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Thermostat.setCorrection\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"temperature\": 0.5,\n        \"humidity\": 2\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set temperature and humidity correction for the local sensor.\n\n**Parameters:**\n- `temperature` — Correction value (+/- 5.0°C)\n- `humidity` — Correction value (+/- 10%)"
+					}
+				},
+				{
+					"name": "Get Thermostat Firmware Version",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Thermostat.getVersion\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get firmware info for a thermostat."
+					}
+				},
+				{
+					"name": "Start Thermostat Firmware Upgrade",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Thermostat.startUpgrade\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"versionId\": \"{{version_id}}\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Start firmware upgrade on a thermostat."
+					}
+				},
+				{
+					"name": "Get Thermostat Activity Logs",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Thermostat.getActivityLogs\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {\n        \"search\": {\n            \"startDate\": \"2025-01-01\",\n            \"endDate\": \"2025-12-31\"\n        }\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Get activity logs for a thermostat.\n\n⚠️ Requires `DEVICE.HISTORICAL_DATA.READ` permission."
+					}
+				}
+			]
+		},
+		{
+			"name": "🚗 GarageDoor",
+			"description": "Garage door controller operations.",
+			"item": [
+				{
+					"name": "Toggle Garage Door",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"GarageDoor.toggle\",\n    \"time\": {{timestamp}},\n    \"targetDevice\": {\n        \"deviceId\": \"{{device_id}}\",\n        \"token\": \"{{device_token}}\"\n    },\n    \"params\": {}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Toggle the garage door open/closed.\n\n⚠️ **Caution:** Check the state of the Garage Door Sensor first before calling this!\n\nUse `DoorSensor.getState` with the paired sensor to verify current position."
+					}
+				}
+			]
+		},
+		{
+			"name": "⚙️ Manage (CSID)",
+			"description": "Account management operations — device provisioning and CSID-specific methods.\n\n⚠️ Most methods require CSID authentication (business partners only).",
+			"item": [
+				{
+					"name": "Add YoLink Device",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manage.addYoLinkDevice\",\n    \"time\": {{timestamp}},\n    \"params\": {\n        \"sn\": \"YOUR_DEVICE_SN_CODE\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Add a YoLink device by SN code (from device QR code).\n\n⚠️ CSID required.\n\n**Response:** Device info including deviceId, token, type, modelName."
+					}
+				},
+				{
+					"name": "Delete YoLink Device",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manage.delYoLinkDevice\",\n    \"time\": {{timestamp}},\n    \"params\": {\n        \"deviceId\": \"{{device_id}}\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Delete a YoLink device and revoke its net token.\n\n⚠️ CSID required. **Destructive operation.**"
+					}
+				},
+				{
+					"name": "Set Callback URL",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manage.setCallbackURL\",\n    \"time\": {{timestamp}},\n    \"params\": {\n        \"url\": \"https://your-server.com/webhook/yolink\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Set the callback URL for HTTP callbacks (staging environment only).\n\n⚠️ CSID required.\n\nSet `url` to `\"MQTT\"` to route reports to MQTT channel instead."
+					}
+				},
+				{
+					"name": "Sync Account Devices",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manage.syncAccountDevice\",\n    \"time\": {{timestamp}},\n    \"params\": {\n        \"accessToken\": \"{{yosmart_account_access_token}}\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Sync a YoSmart account's device list.\n\n⚠️ CSID required.\n\n**Parameters:** `accessToken` — YoSmart account OAuth access token"
+					}
+				},
+				{
+					"name": "Retrieve YoLink Device Info",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manage.retrieveYoLinkDevice\",\n    \"time\": {{timestamp}},\n    \"params\": {\n        \"sn\": \"YOUR_DEVICE_SN_CODE\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Retrieve basic device info by SN code.\n\n⚠️ CSID required."
+					}
+				},
+				{
+					"name": "Create Access Token (Scoped)",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Manage.createAccessToken\",\n    \"time\": {{timestamp}},\n    \"params\": {\n        \"scope\": \"production/*\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Create a scoped access token for API access.\n\n⚠️ CSID required.\n\n**Parameters:** `scope` — API access scope (e.g., `production/*`)\n\n**Response:**\n- `access_token` — Scoped token\n- `token_type` — \"bearer\"\n- `expires_in` — Lifetime in seconds\n- `scope` — Granted scopes"
+					}
+				}
+			]
+		},
+		{
+			"name": "🏭 Device Production",
+			"description": "Manufacturing & provisioning API for device production.\n\n⚠️ CSID with `production/*` scope required.\n\n**Endpoint:** `https://api.yosmart.com/open/production/v2/api`",
+			"item": [
+				{
+					"name": "Request Device IDs",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"requestDeviceId\",\n    \"params\": {\n        \"size\": 10\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{production_path}}", "host": ["{{base_url}}{{production_path}}"], "path": []},
+						"description": "Request a batch of device IDs for manufacturing.\n\n⚠️ Ensure you have sufficient Device Licenses.\n\n**Parameters:** `size` — Number of IDs to request\n\n**Response:** `data.deviceIdList` — Array of device IDs"
+					}
+				},
+				{
+					"name": "Activate Device ID",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"activateDeviceId\",\n    \"params\": {\n        \"deviceId\": \"device_id_here\",\n        \"chipId\": \"chip_unique_id\",\n        \"appEui\": \"70B3D57ED00001C0\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{production_path}}", "host": ["{{base_url}}{{production_path}}"], "path": []},
+						"description": "Activate a Device ID by associating it with a physical device.\n\n**Parameters:**\n- `deviceId` — Target device ID (optional; auto-allocated if omitted)\n- `chipId` — Unique chip identifier (required)\n- `appEui` — Application EUI (required)"
+					}
+				},
+				{
+					"name": "Activate Device ID (Auto-Allocate)",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"activateDeviceId\",\n    \"params\": {\n        \"chipId\": \"chip_unique_id\",\n        \"appEui\": \"70B3D57ED00001C0\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{production_path}}", "host": ["{{base_url}}{{production_path}}"], "path": []},
+						"description": "Activate a device with auto-allocated Device ID.\n\nOmit `deviceId` to let the system assign one automatically."
+					}
+				},
+				{
+					"name": "Request SN Codes",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"requestSN\",\n    \"params\": {\n        \"size\": 100\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{production_path}}", "host": ["{{base_url}}{{production_path}}"], "path": []},
+						"description": "Request a batch of serial number codes.\n\n**Parameters:** `size` — Number of SN codes to generate\n\n**Response:** `data.snList` — Array of SN codes"
+					}
+				},
+				{
+					"name": "Bind SN to Device",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"bindSN\",\n    \"params\": {\n        \"deviceId\": \"device_id_here\",\n        \"sn\": \"SN0001\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{production_path}}", "host": ["{{base_url}}{{production_path}}"], "path": []},
+						"description": "Bind a serial number to an activated device.\n\n⚠️ Device must be activated first (see Activate Device ID).\n\n**Parameters:**\n- `deviceId` — Activated device ID (required)\n- `sn` — SN code (optional; auto-generated if empty)"
+					}
+				},
+				{
+					"name": "Bind SN to Device (Auto-Generate)",
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"bindSN\",\n    \"params\": {\n        \"deviceId\": \"device_id_here\",\n        \"sn\": \"\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}{{production_path}}", "host": ["{{base_url}}{{production_path}}"], "path": []},
+						"description": "Bind an auto-generated SN to an activated device."
+					}
+				}
+			]
+		},
+		{
+			"name": "🧪 Health & Debug",
+			"description": "Utility requests for testing connectivity, token validation, and error simulation.",
+			"item": [
+				{
+					"name": "Test Connection (Get Device List)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('API connection is working', function () {",
+									"    pm.response.to.have.status(200);",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.code).to.eql('000000');",
+									"});",
+									"",
+									"pm.test('Received device list', function () {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.data.devices).to.be.an('array');",
+									"    console.log('✅ Connection OK. Devices found: ' + json.data.devices.length);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Home.getDeviceList\",\n    \"time\": {{timestamp}}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Quick connectivity test — verifies token is valid and API is reachable."
+					}
+				},
+				{
+					"name": "Test Invalid Method",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Returns method not supported error', function () {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.code).to.eql('010203');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Invalid.method\",\n    \"time\": {{timestamp}}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Test error handling — should return error code `010203` (method not supported)."
+					}
+				},
+				{
+					"name": "Test Missing Timestamp",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Returns time required error', function () {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.code).to.eql('010201');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Home.getDeviceList\"\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Test validation — should return error code `010201` (time cannot be null)."
+					}
+				},
+				{
+					"name": "Test Missing Method",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Returns method required error', function () {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.code).to.eql('010202');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"time\": {{timestamp}}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Test validation — should return error code `010202` (method cannot be null)."
+					}
+				},
+				{
+					"name": "Test Expired Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Returns token expired error', function () {",
+									"    const json = pm.response.json();",
+									"    pm.expect(['010103', '010104']).to.include(json.code);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [{"key": "token", "value": "expired_fake_token", "type": "string"}]
+						},
+						"method": "POST",
+						"header": [{"key": "Content-Type", "value": "application/json"}],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"method\": \"Home.getDeviceList\",\n    \"time\": {{timestamp}}\n}"
+						},
+						"url": {"raw": "{{base_url}}{{api_path}}", "host": ["{{base_url}}{{api_path}}"], "path": []},
+						"description": "Test authentication error handling with an invalid token."
+					}
+				}
+			]
+		}
+	]
+}

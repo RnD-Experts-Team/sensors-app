@@ -42,11 +42,11 @@ function getCsrfToken(): string {
 }
 
 /**
- * Fetch all YoSmart devices for a specific store
+ * Fetch all YoSmart devices for a specific credential
  */
-export async function fetchYoSmartDevices(storeId: number): Promise<ApiResponse<{ devices: Device[] }>> {
+export async function fetchYoSmartDevices(credentialId: number): Promise<ApiResponse<{ devices: Device[] }>> {
   try {
-    const response = await fetch(yosmartDevicesList.url(storeId), {
+    const response = await fetch(yosmartDevicesList.url(credentialId), {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -70,11 +70,11 @@ export async function fetchYoSmartDevices(storeId: number): Promise<ApiResponse<
 }
 
 /**
- * Fetch YoSmart home information for a specific store
+ * Fetch YoSmart home information for a specific credential
  */
-export async function fetchYoSmartHome(storeId: number): Promise<ApiResponse<{ homeId: string }>> {
+export async function fetchYoSmartHome(credentialId: number): Promise<ApiResponse<{ homeId: string }>> {
   try {
-    const response = await fetch(yosmartHomeInfo.url(storeId), {
+    const response = await fetch(yosmartHomeInfo.url(credentialId), {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -109,7 +109,7 @@ export async function fetchYoSmartHome(storeId: number): Promise<ApiResponse<{ h
  * device types and the Hub rejected non-Hub tokens.
  */
 export async function getDeviceState(
-  storeId: number,
+  credentialId: number,
   deviceId: string,
   token: string,
   deviceType: string
@@ -120,7 +120,7 @@ export async function getDeviceState(
       deviceToken: token,
       ...(deviceType && { deviceType }),
     };
-    const response = await fetch(yosmartDeviceState.url(storeId), {
+    const response = await fetch(yosmartDeviceState.url(credentialId), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -157,14 +157,14 @@ export async function getDeviceState(
  * Control a device
  */
 export async function controlDevice(
-  storeId: number,
+  credentialId: number,
   deviceId: string,
   method: string,
   params?: Record<string, any>,
   token?: string
 ): Promise<ApiResponse<any>> {
   try {
-    const response = await fetch(yosmartDeviceControl.url(storeId), {
+    const response = await fetch(yosmartDeviceControl.url(credentialId), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -199,9 +199,9 @@ export async function controlDevice(
  * Fetch states for ALL devices in a single request.
  * The backend iterates each device and calls {DeviceType}.getState for each.
  */
-export async function fetchAllDeviceStates(storeId: number): Promise<ApiResponse<any>> {
+export async function fetchAllDeviceStates(credentialId: number): Promise<ApiResponse<any>> {
   try {
-    const response = await fetch(yosmartAllStates.url(storeId), {
+    const response = await fetch(yosmartAllStates.url(credentialId), {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',

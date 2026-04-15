@@ -61,10 +61,10 @@ class YoSmartService
     public function __construct(
         private readonly string $uaid,
         private readonly string $secret,
-        private readonly int $storeId,
+        private readonly int $credentialId,
     ) {
-        $this->tokenCacheKey   = "yosmart_access_token_{$storeId}";
-        $this->devicesCacheKey = "yosmart_devices_{$storeId}";
+        $this->tokenCacheKey   = "yosmart_access_token_{$credentialId}";
+        $this->devicesCacheKey = "yosmart_devices_{$credentialId}";
     }
 
     // -------------------------------------------------------------------------
@@ -112,8 +112,8 @@ class YoSmartService
                     Cache::put($this->tokenCacheKey, $token, now()->addSeconds($ttl));
 
                     Log::info('YoSmart: token obtained', [
-                        'store_id'   => $this->storeId,
-                        'expires_in' => $expiresIn,
+                        'credential_id' => $this->credentialId,
+                        'expires_in'    => $expiresIn,
                     ]);
 
                     return $token;
@@ -285,6 +285,116 @@ class YoSmartService
     // -------------------------------------------------------------------------
     // Accessors (for health checks etc.)
     // -------------------------------------------------------------------------
+
+    /**
+     * Fetch states for multiple devices concurrently using HTTP pool.
+     *
+     * @param  array  $devices  Array of devices from Home.getDeviceList
+     * @return array  Array of state results keyed by deviceId
+     */
+    public function batchGetStates(array $devices): array
+    {
+        $token = $this->getAccessToken();
+        if (!$token) {
+            return [];
+        }
+
+        // Build requests grouped by device
+        $deviceMap = [];
+        foreach ($devices as $device) {
+            $deviceId   = $device['deviceId'];
+            $deviceType = $device['type'] ?? 'unknown';
+            $devToken   = $device['token'] ?? null;
+
+            if (!$devToken) {
+                $deviceMap[$deviceId] = [
+                    'deviceId'   => $deviceId,
+                    'deviceType' => $deviceType,
+                    'name'       => $device['name'] ?? '',
+                    'modelName'  => $device['modelName'] ?? '',
+                    'success'    => false,
+                    'error'      => 'No token available',
+                ];
+                continue;
+            }
+
+            $deviceMap[$deviceId] = [
+                'device'   => $device,
+                'method'   => $this->resolveGetStateMethod($deviceType),
+                'devToken' => $devToken,
+            ];
+        }
+
+        // Separate devices that need API calls from those that already have results
+        $toFetch = array_filter($deviceMap, fn($d) => isset($d['method']));
+        $results = array_filter($deviceMap, fn($d) => !isset($d['method']));
+
+        if (empty($toFetch)) {
+            return array_values($results);
+        }
+
+        // Use HTTP pool for concurrent requests
+        $responses = Http::pool(function ($pool) use ($toFetch, $token) {
+            foreach ($toFetch as $deviceId => $info) {
+                $pool->as($deviceId)
+                    ->withHeaders([
+                        'Content-Type'  => 'application/json',
+                        'Authorization' => "Bearer {$token}",
+                    ])
+                    ->timeout(10)
+                    ->post(self::API_URL, [
+                        'method'       => $info['method'],
+                        'time'         => intval(microtime(true) * 1000),
+                        'targetDevice' => $deviceId,
+                        'token'        => $info['devToken'],
+                    ]);
+            }
+        });
+
+        // Process responses
+        foreach ($toFetch as $deviceId => $info) {
+            $device     = $info['device'];
+            $deviceType = $device['type'] ?? 'unknown';
+            $response   = $responses[$deviceId] ?? null;
+
+            if ($response && $response->successful()) {
+                $result = $response->json();
+                if (($result['code'] ?? null) === '000000') {
+                    $results[$deviceId] = [
+                        'deviceId'   => $deviceId,
+                        'deviceType' => $deviceType,
+                        'name'       => $device['name'] ?? '',
+                        'modelName'  => $device['modelName'] ?? '',
+                        'success'    => true,
+                        'state'      => $result['data'] ?? null,
+                        'method'     => $info['method'],
+                    ];
+                } else {
+                    $results[$deviceId] = [
+                        'deviceId'   => $deviceId,
+                        'deviceType' => $deviceType,
+                        'name'       => $device['name'] ?? '',
+                        'modelName'  => $device['modelName'] ?? '',
+                        'success'    => false,
+                        'error'      => $result['desc'] ?? 'Unknown error',
+                        'code'       => $result['code'] ?? 'unknown',
+                        'method'     => $info['method'],
+                    ];
+                }
+            } else {
+                $results[$deviceId] = [
+                    'deviceId'   => $deviceId,
+                    'deviceType' => $deviceType,
+                    'name'       => $device['name'] ?? '',
+                    'modelName'  => $device['modelName'] ?? '',
+                    'success'    => false,
+                    'error'      => 'HTTP request failed',
+                ];
+            }
+        }
+
+        return array_values($results);
+    }
 
     public function hasCredentials(): bool
     {

@@ -6,6 +6,7 @@ use App\Models\AppSetting;
 use App\Models\SensorReport;
 use App\Models\Store;
 use App\Models\StoreDevice;
+use App\Models\YoSmartCredential;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -116,55 +117,70 @@ class ReportController extends Controller
             'store_id' => 'required|integer|exists:stores,id',
         ]);
 
-        $store = Store::with('devices')->findOrFail($validated['store_id']);
+        $store = Store::with(['devices' => function ($q) {
+            $q->with('credential');
+        }])->findOrFail($validated['store_id']);
 
-        if (empty($store->yosmart_uaid) || empty($store->yosmart_secret)) {
+        $devices = $store->devices;
+
+        if ($devices->isEmpty()) {
             return response()->json([
                 'success' => false,
-                'error'   => 'This store has no YoSmart credentials configured.',
+                'error'   => 'This store has no linked devices.',
             ], 422);
         }
 
-        $service = new YoSmartService(
-            uaid:    $store->yosmart_uaid,
-            secret:  $store->yosmart_secret,
-            storeId: $store->id,
-        );
+        // Group devices by credential so we create one YoSmartService per credential
+        $byCredential = $devices->groupBy('credential_id');
 
         $reports = [];
 
-        foreach ($store->devices as $device) {
-            /** @var StoreDevice $device */
-            $method = $device->device_type . '.getState';
+        foreach ($byCredential as $credentialId => $credentialDevices) {
+            $credential = $credentialDevices->first()->credential;
 
-            $result = $service->callApi($method, [
-                'targetDevice' => $device->device_id,
-                'token'        => $device->device_token,
-            ]);
+            if (! $credential || ! $credential->hasCredentials()) {
+                continue;
+            }
 
-            $success = $result && ($result['code'] ?? null) === '000000';
-            $data    = $result['data'] ?? [];
-            $state   = $data['state'] ?? [];
+            $service = new YoSmartService(
+                uaid:         $credential->uaid,
+                secret:       $credential->secret,
+                credentialId: $credential->id,
+            );
 
-            $report = SensorReport::create([
-                'store_id'         => $store->id,
-                'store_device_id'  => $device->id,
-                'device_id'        => $device->device_id,
-                'device_type'      => $device->device_type,
-                'device_name'      => $device->device_name,
-                'online'           => $data['online'] ?? false,
-                'temperature'      => $state['temperature'] ?? $state['temp'] ?? null,
-                'temperature_unit' => 'c',
-                'humidity'         => $state['humidity'] ?? null,
-                'battery_level'    => $state['battery'] ?? null,
-                'alarm'            => self::parseAlarm($state['alarm'] ?? false),
-                'state'            => is_array($state) ? ($state['state'] ?? null) : $state,
-                'raw_state'        => $success ? $data : ['error' => $result['desc'] ?? 'unknown'],
-                'reported_at'      => isset($data['reportAt']) ? Carbon::parse($data['reportAt']) : null,
-                'recorded_at'      => now(),
-            ]);
+            foreach ($credentialDevices as $device) {
+                /** @var StoreDevice $device */
+                $method = $device->device_type . '.getState';
 
-            $reports[] = $report;
+                $result = $service->callApi($method, [
+                    'targetDevice' => $device->device_id,
+                    'token'        => $device->device_token,
+                ]);
+
+                $success = $result && ($result['code'] ?? null) === '000000';
+                $data    = $result['data'] ?? [];
+                $state   = $data['state'] ?? [];
+
+                $report = SensorReport::create([
+                    'store_id'         => $store->id,
+                    'store_device_id'  => $device->id,
+                    'device_id'        => $device->device_id,
+                    'device_type'      => $device->device_type,
+                    'device_name'      => $device->device_name,
+                    'online'           => $data['online'] ?? false,
+                    'temperature'      => $state['temperature'] ?? $state['temp'] ?? null,
+                    'temperature_unit' => 'c',
+                    'humidity'         => $state['humidity'] ?? null,
+                    'battery_level'    => $state['battery'] ?? null,
+                    'alarm'            => self::parseAlarm($state['alarm'] ?? false),
+                    'state'            => is_array($state) ? ($state['state'] ?? null) : $state,
+                    'raw_state'        => $success ? $data : ['error' => $result['desc'] ?? 'unknown'],
+                    'reported_at'      => isset($data['reportAt']) ? Carbon::parse($data['reportAt']) : null,
+                    'recorded_at'      => now(),
+                ]);
+
+                $reports[] = $report;
+            }
         }
 
         $targetUnit = AppSetting::temperatureUnit();
