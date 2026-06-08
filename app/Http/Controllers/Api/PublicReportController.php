@@ -4,10 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
-use App\Models\StoreDevice;
-use App\Services\YoSmartService;
 use App\Models\SensorReport;
 use App\Models\Store;
+use App\Services\YoSmartService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -35,10 +34,25 @@ class PublicReportController extends Controller
         return DB::getDriverName() === 'pgsql';
     }
 
+    private function isSqlite(): bool
+    {
+        return DB::getDriverName() === 'sqlite';
+    }
+
     private function dateFormat(string $column, string $pgFormat): string
     {
         if ($this->isPostgres()) {
             return "TO_CHAR({$column}, '{$pgFormat}')";
+        }
+
+        if ($this->isSqlite()) {
+            $sqliteFormat = str_replace(
+                ['HH24', 'YYYY', 'MM', 'DD'],
+                ['%H',   '%Y',   '%m', '%d'],
+                $pgFormat
+            );
+
+            return "strftime('{$sqliteFormat}', {$column})";
         }
 
         $mysqlFormat = str_replace(
@@ -92,14 +106,14 @@ class PublicReportController extends Controller
     public function snapshot(Request $request, string $store_id): JsonResponse
     {
         $store = $this->resolveStore($store_id);
-        if (!$store) {
+        if (! $store) {
             return $this->storeNotFound($store_id);
         }
 
         if ($store->devices->isEmpty()) {
             return response()->json([
                 'success' => false,
-                'error'   => 'This store has no linked devices.',
+                'error' => 'This store has no linked devices.',
             ], 422);
         }
 
@@ -116,65 +130,65 @@ class PublicReportController extends Controller
             }
 
             $service = new YoSmartService(
-                uaid:         $credential->uaid,
-                secret:       $credential->secret,
+                uaid: $credential->uaid,
+                secret: $credential->secret,
                 credentialId: $credential->id,
             );
 
             foreach ($credentialDevices as $device) {
-                $method = $device->device_type . '.getState';
+                $method = $device->device_type.'.getState';
 
                 $result = $service->callApi($method, [
                     'targetDevice' => $device->device_id,
-                    'token'        => $device->device_token,
+                    'token' => $device->device_token,
                 ]);
 
-            $success = $result && ($result['code'] ?? null) === '000000';
-            $data    = $result['data'] ?? [];
-            $state   = $data['state'] ?? [];
+                $success = $result && ($result['code'] ?? null) === '000000';
+                $data = $result['data'] ?? [];
+                $state = $data['state'] ?? [];
 
-            $report = SensorReport::create([
-                'store_id'         => $store->id,
-                'store_device_id'  => $device->id,
-                'device_id'        => $device->device_id,
-                'device_type'      => $device->device_type,
-                'device_name'      => $device->device_name,
-                'online'           => $data['online'] ?? false,
-                'temperature'      => $state['temperature'] ?? $state['temp'] ?? null,
-                'temperature_unit' => 'c',
-                'humidity'         => $state['humidity'] ?? null,
-                'battery_level'    => $state['battery'] ?? null,
-                'alarm'            => self::parseAlarm($state['alarm'] ?? false),
-                'state'            => is_array($state) ? ($state['state'] ?? null) : $state,
-                'raw_state'        => $success ? $data : ['error' => $result['desc'] ?? 'unknown'],
-                'reported_at'      => isset($data['reportAt']) ? Carbon::parse($data['reportAt']) : null,
-                'recorded_at'      => now(),
-            ]);
+                $report = SensorReport::create([
+                    'store_id' => $store->id,
+                    'store_device_id' => $device->id,
+                    'device_id' => $device->device_id,
+                    'device_type' => $device->device_type,
+                    'device_name' => $device->device_name,
+                    'online' => $data['online'] ?? false,
+                    'temperature' => $state['temperature'] ?? $state['temp'] ?? null,
+                    'temperature_unit' => 'c',
+                    'humidity' => $state['humidity'] ?? null,
+                    'battery_level' => $state['battery'] ?? null,
+                    'alarm' => self::parseAlarm($state['alarm'] ?? false),
+                    'state' => is_array($state) ? ($state['state'] ?? null) : $state,
+                    'raw_state' => $success ? $data : ['error' => $result['desc'] ?? 'unknown'],
+                    'reported_at' => isset($data['reportAt']) ? Carbon::parse($data['reportAt']) : null,
+                    'recorded_at' => now(),
+                ]);
 
-            $snapshot[] = [
-                'device_id'   => $device->device_id,
-                'device_name' => $device->device_name,
-                'device_type' => $device->device_type,
-                'online'      => $report->online,
-                'temperature' => AppSetting::convertTemp($report->temperature, $report->temperature_unit, $targetUnit),
-                'temperature_unit' => $targetUnit,
-                'humidity'    => $report->humidity,
-                'battery'     => $report->battery_level,
-                'alarm'       => $report->alarm,
-                'state'       => $report->state,
-                'reported_at' => $report->reported_at?->toIso8601String(),
-                'success'     => $success,
-            ];
-        }
+                $snapshot[] = [
+                    'device_id' => $device->device_id,
+                    'device_name' => $device->device_name,
+                    'device_type' => $device->device_type,
+                    'online' => $report->online,
+                    'temperature' => AppSetting::convertTemp($report->temperature, $report->temperature_unit, $targetUnit),
+                    'temperature_unit' => $targetUnit,
+                    'humidity' => $report->humidity,
+                    'battery' => $report->battery_level,
+                    'alarm' => $report->alarm,
+                    'state' => $report->state,
+                    'reported_at' => $report->reported_at?->toIso8601String(),
+                    'success' => $success,
+                ];
+            }
         }
 
         return response()->json([
-            'success'          => true,
-            'store'            => $this->storePayload($store),
+            'success' => true,
+            'store' => $this->storePayload($store),
             'temperature_unit' => $targetUnit,
-            'snapshot'         => $snapshot,
-            'count'            => count($snapshot),
-            'captured_at'      => now()->toIso8601String(),
+            'snapshot' => $snapshot,
+            'count' => count($snapshot),
+            'captured_at' => now()->toIso8601String(),
         ]);
     }
 
@@ -189,19 +203,19 @@ class PublicReportController extends Controller
     public function index(Request $request, string $store_id): JsonResponse
     {
         $store = $this->resolveStore($store_id);
-        if (!$store) {
+        if (! $store) {
             return $this->storeNotFound($store_id);
         }
 
-        $period   = $request->input('period', 'daily');
+        $period = $request->input('period', 'daily');
         $baseDate = Carbon::parse($request->input('date', now()->toDateString()));
         $deviceId = $request->input('device_id');
-        $fields   = $request->input('fields'); // comma-separated
+        $fields = $request->input('fields'); // comma-separated
 
-        if (!in_array($period, ['daily', 'weekly', 'monthly'], true)) {
+        if (! in_array($period, ['daily', 'weekly', 'monthly'], true)) {
             return response()->json([
                 'success' => false,
-                'error'   => 'Invalid period. Use daily, weekly, or monthly.',
+                'error' => 'Invalid period. Use daily, weekly, or monthly.',
             ], 422);
         }
 
@@ -222,7 +236,7 @@ class PublicReportController extends Controller
         // Time-series
         $timeSeries = (clone $query)
             ->select([
-                DB::raw($this->dateFormat('recorded_at', $groupFormat) . ' as time_bucket'),
+                DB::raw($this->dateFormat('recorded_at', $groupFormat).' as time_bucket'),
                 DB::raw("AVG({$t}) as avg_temp"),
                 DB::raw("MIN({$t}) as min_temp"),
                 DB::raw("MAX({$t}) as max_temp"),
@@ -247,8 +261,8 @@ class PublicReportController extends Controller
                 DB::raw('MIN(humidity) as min_humidity'),
                 DB::raw('MAX(humidity) as max_humidity'),
                 DB::raw('COUNT(*) as reading_count'),
-                DB::raw('SUM(CASE WHEN alarm = ' . $this->boolLiteral(true) . ' THEN 1 ELSE 0 END) as alarm_count'),
-                DB::raw('SUM(CASE WHEN online = ' . $this->boolLiteral(false) . ' THEN 1 ELSE 0 END) as offline_count'),
+                DB::raw('SUM(CASE WHEN alarm = '.$this->boolLiteral(true).' THEN 1 ELSE 0 END) as alarm_count'),
+                DB::raw('SUM(CASE WHEN online = '.$this->boolLiteral(false).' THEN 1 ELSE 0 END) as offline_count'),
             ])
             ->groupBy('device_id', 'device_name')
             ->get();
@@ -261,19 +275,19 @@ class PublicReportController extends Controller
                 DB::raw("MAX({$t}) as max_temp"),
                 DB::raw('AVG(humidity) as avg_humidity'),
                 DB::raw('COUNT(*) as total_readings'),
-                DB::raw('SUM(CASE WHEN alarm = ' . $this->boolLiteral(true) . ' THEN 1 ELSE 0 END) as total_alarms'),
-                DB::raw('SUM(CASE WHEN online = ' . $this->boolLiteral(false) . ' THEN 1 ELSE 0 END) as total_offline'),
+                DB::raw('SUM(CASE WHEN alarm = '.$this->boolLiteral(true).' THEN 1 ELSE 0 END) as total_alarms'),
+                DB::raw('SUM(CASE WHEN online = '.$this->boolLiteral(false).' THEN 1 ELSE 0 END) as total_offline'),
             ])
             ->first();
 
         $response = [
-            'success'          => true,
-            'store'            => $this->storePayload($store),
-            'period'           => $period,
+            'success' => true,
+            'store' => $this->storePayload($store),
+            'period' => $period,
             'temperature_unit' => $targetUnit,
-            'range'            => [
+            'range' => [
                 'from' => $from->toIso8601String(),
-                'to'   => $to->toIso8601String(),
+                'to' => $to->toIso8601String(),
             ],
         ];
 
@@ -305,7 +319,7 @@ class PublicReportController extends Controller
     public function history(Request $request, string $store_id): JsonResponse
     {
         $store = $this->resolveStore($store_id);
-        if (!$store) {
+        if (! $store) {
             return $this->storeNotFound($store_id);
         }
 
@@ -333,14 +347,15 @@ class PublicReportController extends Controller
         $paginated->getCollection()->transform(function ($report) use ($targetUnit) {
             $report->temperature = AppSetting::convertTemp($report->temperature, $report->temperature_unit, $targetUnit);
             $report->temperature_unit = $targetUnit;
+
             return $report;
         });
 
         return response()->json([
-            'success'          => true,
-            'store'            => $this->storePayload($store),
+            'success' => true,
+            'store' => $this->storePayload($store),
             'temperature_unit' => $targetUnit,
-            'reports'          => $paginated,
+            'reports' => $paginated,
         ]);
     }
 
@@ -355,12 +370,12 @@ class PublicReportController extends Controller
     public function alerts(Request $request, string $store_id): JsonResponse
     {
         $store = $this->resolveStore($store_id);
-        if (!$store) {
+        if (! $store) {
             return $this->storeNotFound($store_id);
         }
 
         $from = Carbon::parse($request->input('from', now()->subDay()));
-        $to   = Carbon::parse($request->input('to', now()));
+        $to = Carbon::parse($request->input('to', now()));
 
         $alarms = SensorReport::forStore($store->id)
             ->between($from, $to)
@@ -384,6 +399,7 @@ class PublicReportController extends Controller
         $alarms->transform(function ($report) use ($targetUnit) {
             $report->temperature = AppSetting::convertTemp($report->temperature, $report->temperature_unit, $targetUnit);
             $report->temperature_unit = $targetUnit;
+
             return $report;
         });
 
@@ -401,17 +417,17 @@ class PublicReportController extends Controller
             ->get();
 
         return response()->json([
-            'success'          => true,
-            'store'            => $this->storePayload($store),
+            'success' => true,
+            'store' => $this->storePayload($store),
             'temperature_unit' => $targetUnit,
-            'range'   => [
+            'range' => [
                 'from' => $from->toIso8601String(),
-                'to'   => $to->toIso8601String(),
+                'to' => $to->toIso8601String(),
             ],
-            'alarms'         => $alarms,
-            'alarm_count'    => $alarms->count(),
+            'alarms' => $alarms,
+            'alarm_count' => $alarms->count(),
             'offline_events' => $offlineEvents,
-            'offline_count'  => $offlineEvents->count(),
+            'offline_count' => $offlineEvents->count(),
         ]);
     }
 
@@ -424,6 +440,7 @@ class PublicReportController extends Controller
     private function resolveUnit(Request $request): string
     {
         $unit = strtoupper($request->input('unit', 'C'));
+
         return in_array($unit, ['C', 'F'], true) ? $unit : 'C';
     }
 
@@ -441,7 +458,7 @@ class PublicReportController extends Controller
     {
         return response()->json([
             'success' => false,
-            'error'   => "Store '{$store_id}' not found or inactive.",
+            'error' => "Store '{$store_id}' not found or inactive.",
         ], 404);
     }
 
@@ -449,7 +466,7 @@ class PublicReportController extends Controller
     {
         return [
             'store_number' => $store->store_number,
-            'store_name'   => $store->store_name,
+            'store_name' => $store->store_name,
         ];
     }
 

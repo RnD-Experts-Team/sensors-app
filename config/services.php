@@ -40,14 +40,15 @@ return [
         'secret' => env('YOSMART_SECRET'),
     ],
 
-        'auth_server' => [
-        'base_url'    => env('AUTH_SERVER_BASE_URL', 'http://auth-service.local'),
-        'verify_path' => env('AUTH_SERVER_VERIFY_PATH', '/api/v1/auth/token/verify'),
-        'service_name' => env('AUTH_SERVER_SERVICE_NAME', 'my-service'),
-        'call_token'  => env('AUTH_SERVER_CALL_TOKEN', ''),
+    'auth_server' => [
+        'base_url' => env('AUTH_SERVER_BASE_URL', 'http://auth-service.local'),
+        // NOTE: the auth server (pizzasys) route is POST /api/v1/auth/token-verify (hyphen).
+        'verify_path' => env('AUTH_SERVER_VERIFY_PATH', '/api/v1/auth/token-verify'),
+        'service_name' => env('AUTH_SERVER_SERVICE_NAME', 'sensors-app'),
+        'call_token' => env('AUTH_SERVER_CALL_TOKEN', ''),
 
-        'timeout'  => (int) env('AUTH_SERVER_TIMEOUT', 3),
-        'retries'  => (int) env('AUTH_SERVER_RETRIES', 1),
+        'timeout' => (int) env('AUTH_SERVER_TIMEOUT', 3),
+        'retries' => (int) env('AUTH_SERVER_RETRIES', 1),
         'retry_ms' => (int) env('AUTH_SERVER_RETRY_MS', 100),
 
         // Redis caching on client side

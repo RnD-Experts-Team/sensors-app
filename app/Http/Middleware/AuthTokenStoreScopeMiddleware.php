@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
 class AuthTokenStoreScopeMiddleware
@@ -23,26 +24,35 @@ class AuthTokenStoreScopeMiddleware
         // 2) Read auth server config from config/services.php
         $cfg = (array) config('services.auth_server', []);
 
-        $baseUrl     = (string) ($cfg['base_url'] ?? '');
-        $verifyPath  = (string) ($cfg['verify_path'] ?? '');
+        $baseUrl = (string) ($cfg['base_url'] ?? '');
+        $verifyPath = (string) ($cfg['verify_path'] ?? '');
         $serviceName = (string) ($cfg['service_name'] ?? '');
-        $callToken   = (string) ($cfg['call_token'] ?? '');
+        $callToken = (string) ($cfg['call_token'] ?? '');
 
-        $timeout  = (int) ($cfg['timeout'] ?? 3);
-        $retries  = (int) ($cfg['retries'] ?? 1);
-        $retryMs  = (int) ($cfg['retry_ms'] ?? 100);
+        $timeout = (int) ($cfg['timeout'] ?? 3);
+        $retries = (int) ($cfg['retries'] ?? 1);
+        $retryMs = (int) ($cfg['retry_ms'] ?? 100);
         $cacheTtl = (int) ($cfg['cache_ttl'] ?? 30);
 
         if ($baseUrl === '' || $verifyPath === '' || $serviceName === '' || $callToken === '') {
-            abort(500, 'Auth server config missing: services.auth_server.*');
+            $missing = array_keys(array_filter([
+                'base_url' => $baseUrl === '',
+                'verify_path' => $verifyPath === '',
+                'service_name' => $serviceName === '',
+                'call_token' => $callToken === '',
+            ]));
+
+            Log::error('AuthTokenStoreScope: auth server config missing', ['missing' => $missing]);
+
+            abort(500, 'Auth server config missing: services.auth_server.['.implode(', ', $missing).']');
         }
 
         // 3) Build store_context EXACTLY as TokenVerifyController expects
         $storeContext = $this->buildStoreContext($request);
 
         // 4) Redis cache: key includes token+route+method+store_context signature
-       // $cache = Cache::store('redis');
-       // $cacheKey = $this->verifyCacheKey($serviceName, $userToken, $request, $storeContext);
+        // $cache = Cache::store('redis');
+        // $cacheKey = $this->verifyCacheKey($serviceName, $userToken, $request, $storeContext);
 
         // $verify = $cache->remember($cacheKey, $cacheTtl, function () use (
         //     $baseUrl,
@@ -69,27 +79,39 @@ class AuthTokenStoreScopeMiddleware
         //         $storeContext
         //     );
         // });
- $verify = $this->verifyWithAuthServer(
-    $baseUrl,
-    $verifyPath,
-    $serviceName,
-    $callToken,
-    $timeout,
-    $retries,
-    $retryMs,
-    $userToken,
-    $request,
-    $storeContext
-);
+        $verify = $this->verifyWithAuthServer(
+            $baseUrl,
+            $verifyPath,
+            $serviceName,
+            $callToken,
+            $timeout,
+            $retries,
+            $retryMs,
+            $userToken,
+            $request,
+            $storeContext
+        );
+        // 4b) Distinguish "auth server could not be reached / errored" from
+        //     "token is genuinely invalid". Masking an upstream failure as a
+        //     plain 401 hides real integration problems (e.g. the auth server
+        //     replying 409/5xx to our verify call).
+        if (isset($verify['_transport_error'])) {
+            abort(503, 'Auth verification service unavailable');
+        }
+
+        if (isset($verify['_http_status'])) {
+            abort(502, 'Auth verification failed (upstream HTTP '.(int) $verify['_http_status'].')');
+        }
+
         // 5) Enforce BOTH token validity + authorization decision
         $active = (bool) ($verify['active'] ?? false);
         $authorized = (bool) data_get($verify, 'ext.authorized', false);
 
-        if (!$active) {
+        if (! $active) {
             abort(401, 'Unauthorized');
         }
 
-        if (!$authorized) {
+        if (! $authorized) {
             // Optional: surface required permissions for debugging
             // $required = (array) data_get($verify, 'ext.required_permissions', []);
             abort(403, 'Forbidden');
@@ -120,7 +142,9 @@ class AuthTokenStoreScopeMiddleware
     private function extractBearerToken(Request $request): string
     {
         $h = (string) $request->header('Authorization', '');
-        if ($h === '') return '';
+        if ($h === '') {
+            return '';
+        }
 
         if (stripos($h, 'Bearer ') === 0) {
             return trim(substr($h, 7));
@@ -147,14 +171,14 @@ class AuthTokenStoreScopeMiddleware
         $body = [];
         if ($request->isJson()) {
             $body = (array) ($request->json()->all() ?? []);
-        } elseif (!$request->isMethod('GET')) {
+        } elseif (! $request->isMethod('GET')) {
             $body = (array) ($request->except(['entities', 'file', 'files']) ?? []);
         }
 
         $ctx = [
-            'path'  => $path,
+            'path' => $path,
             'query' => $query,
-            'body'  => $body,
+            'body' => $body,
         ];
 
         // stabilize ordering for hashing
@@ -170,10 +194,12 @@ class AuthTokenStoreScopeMiddleware
             // Route model binding: keep it small + deterministic
             if (is_object($v) && isset($v->id)) {
                 $out[$k] = (int) $v->id;
+
                 continue;
             }
             $out[$k] = $v;
         }
+
         return $out;
     }
 
@@ -193,13 +219,13 @@ class AuthTokenStoreScopeMiddleware
         $tokenHash = hash('sha256', $userToken);
 
         $method = strtoupper((string) $request->method());
-        $path   = '/' . ltrim((string) $request->path(), '/');
+        $path = '/'.ltrim((string) $request->path(), '/');
         $routeName = (string) ($request->route()?->getName() ?? '');
 
         $ctxJson = json_encode($storeContext, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '';
         $ctxSig = hash('sha256', $ctxJson);
 
-        return 'qa:authz:verify:' . hash('sha256', $serviceName . '|' . $tokenHash . '|' . $method . '|' . $path . '|' . $routeName . '|' . $ctxSig);
+        return 'qa:authz:verify:'.hash('sha256', $serviceName.'|'.$tokenHash.'|'.$method.'|'.$path.'|'.$routeName.'|'.$ctxSig);
     }
 
     /**
@@ -219,14 +245,14 @@ class AuthTokenStoreScopeMiddleware
         Request $request,
         array $storeContext
     ): array {
-        $endpoint = rtrim($baseUrl, '/') . '/' . ltrim($verifyPath, '/');
+        $endpoint = rtrim($baseUrl, '/').'/'.ltrim($verifyPath, '/');
 
         $payload = [
-            'service'       => $serviceName,
-            'token'         => $userToken,
-            'method'        => strtoupper((string) $request->method()),
-            'path'          => '/' . ltrim((string) $request->path(), '/'),
-            'route_name'    => (string) ($request->route()?->getName() ?? null),
+            'service' => $serviceName,
+            'token' => $userToken,
+            'method' => strtoupper((string) $request->method()),
+            'path' => '/'.ltrim((string) $request->path(), '/'),
+            'route_name' => (string) ($request->route()?->getName() ?? null),
             'store_context' => $storeContext,
         ];
 
@@ -241,14 +267,26 @@ class AuthTokenStoreScopeMiddleware
 
             $resp = $http->post($endpoint, $payload);
 
-            if (!$resp->ok()) {
-                return ['active' => false];
+            if (! $resp->ok()) {
+                Log::warning('AuthTokenStoreScope: auth server returned non-2xx', [
+                    'endpoint' => $endpoint,
+                    'status' => $resp->status(),
+                    'body' => mb_substr((string) $resp->body(), 0, 500),
+                ]);
+
+                return ['active' => false, '_http_status' => $resp->status()];
             }
 
             $data = $resp->json();
+
             return is_array($data) ? $data : ['active' => false];
         } catch (\Throwable $e) {
-            return ['active' => false];
+            Log::error('AuthTokenStoreScope: auth server transport error', [
+                'endpoint' => $endpoint,
+                'error' => $e->getMessage(),
+            ]);
+
+            return ['active' => false, '_transport_error' => true];
         }
     }
 }
