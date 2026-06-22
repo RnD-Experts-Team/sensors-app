@@ -1,8 +1,8 @@
 <?php
 
 use App\Http\Controllers\Api\PublicStoreController;
-use Illuminate\Support\Facades\Route;
 use App\Http\Middleware\AuthTokenStoreScopeMiddleware;
+use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
@@ -17,6 +17,12 @@ use App\Http\Middleware\AuthTokenStoreScopeMiddleware;
 Route::prefix('stores')->middleware([
     AuthTokenStoreScopeMiddleware::class,
 ])->group(function () {
+    // GET /api/stores/sensors?store_ids[]=03795-00038&store_ids[]=...&unit=C|F
+    // Live sensor data for many stores at once. Empty/omitted store_ids => all
+    // active stores. Registered before {store_id}/sensors (literal vs wildcard).
+    Route::get('sensors', [PublicStoreController::class, 'bulkSensors'])
+        ->name('api.stores.sensors.bulk');
+
     // GET /api/stores/{store_id}/sensors
     Route::get('{store_id}/sensors', [PublicStoreController::class, 'sensors'])
         ->name('api.stores.sensors');

@@ -803,6 +803,58 @@ Authorization: Bearer {token}
 }
 ```
 
+#### Live Sensor Data — Many Stores (Bulk)
+
+Fetch real-time sensor readings for several stores in one call. Provide
+`store_ids` (an array of **store numbers**) to select specific stores, or omit
+it / leave it empty to get **every active store**.
+
+```
+GET /api/stores/sensors?store_ids[]=03795-00038&store_ids[]=03795-00040&unit=F
+Authorization: Bearer {token}
+```
+
+**Query Parameters:**
+
+| Param | Default | Description |
+|---|---|---|
+| `store_ids[]` | _(all active stores)_ | Repeatable store-number filter. Also accepts a comma-separated string: `store_ids=03795-00038,03795-00040`. Empty/omitted ⇒ all active stores. |
+| `unit` | `C` | Temperature unit: `C` or `F` |
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "temperature_unit": "F",
+  "count": 2,
+  "stores": [
+    {
+      "store": { "store_number": "03795-00038", "store_name": "PNE Foods Store 38" },
+      "hub": { "device_id": "hub-001", "is_hub": true, "online": true, "...": "..." },
+      "sensors": [ { "device_id": "...", "temperature": 41.18, "...": "..." } ],
+      "count": 1
+    }
+  ],
+  "requested": ["03795-00038", "03795-00040"],
+  "missing":   ["03795-00040"],
+  "fetched_at": "2026-04-07T18:10:00+00:00"
+}
+```
+
+- `count` is the number of stores returned. Each store object has its own
+  `count` of sensors (hub excluded).
+- `requested` echoes the store numbers asked for (empty when none were given).
+- `missing` lists requested store numbers that were not found or are inactive.
+
+> **Performance:** with no `store_ids`, this fetches live YoSmart state for every
+> device of every active store sequentially. For a large fleet this can be slow;
+> prefer passing explicit `store_ids` for predictable latency.
+
+> **Authorization:** the auth server (pizzasys) must have an AuthRule granting
+> service `sensors-app` access to `GET /api/stores/sensors` (route
+> `api.stores.sensors.bulk`), otherwise a valid token returns `403`.
+
 ### 5.2 Reports
 
 #### Aggregated Report

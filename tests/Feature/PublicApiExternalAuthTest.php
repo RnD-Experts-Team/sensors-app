@@ -182,6 +182,74 @@ class PublicApiExternalAuthTest extends TestCase
             ->assertJsonPath('count', 2);
     }
 
+    public function test_bulk_live_sensors_filters_by_store_ids_and_reports_missing(): void
+    {
+        $this->fakeExternalServices();
+
+        $this->withToken('valid-user-token')
+            ->getJson('/api/stores/sensors?store_ids[]='.$this->store->store_number.'&store_ids[]=NONEXISTENT-00000&unit=F')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('temperature_unit', 'F')
+            ->assertJsonPath('count', 1)
+            ->assertJsonPath('stores.0.store.store_number', $this->store->store_number)
+            ->assertJsonPath('stores.0.hub.device_id', $this->hub->device_id)
+            ->assertJsonPath('stores.0.sensors.0.device_id', $this->sensor->device_id)
+            ->assertJsonPath('stores.0.sensors.0.temperature', 41.18)
+            ->assertJsonPath('stores.0.count', 1)
+            ->assertJsonPath('requested', [$this->store->store_number, 'NONEXISTENT-00000'])
+            ->assertJsonPath('missing', ['NONEXISTENT-00000']);
+    }
+
+    public function test_bulk_live_sensors_returns_all_active_stores_when_empty(): void
+    {
+        $this->fakeExternalServices();
+
+        $credential = YoSmartCredential::query()->firstOrFail();
+
+        $store2 = Store::create([
+            'store_number' => '03795-00099',
+            'store_name' => 'PNE Foods Store 99',
+            'is_active' => true,
+        ]);
+
+        StoreDevice::create([
+            'credential_id' => $credential->id,
+            'store_id' => $store2->id,
+            'device_id' => 'sensor-099',
+            'device_token' => 'sensor-099-token',
+            'device_type' => 'THSensor',
+            'device_name' => 'freezer 03795-00099',
+            'model_name' => 'YS8003-UC',
+            'is_hub' => false,
+            'parsed_store_number' => $store2->store_number,
+        ]);
+
+        // Inactive store must be excluded from the "all stores" result.
+        Store::create([
+            'store_number' => '03795-00100',
+            'store_name' => 'Inactive Store',
+            'is_active' => false,
+        ]);
+
+        $this->withToken('valid-user-token')
+            ->getJson('/api/stores/sensors')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('count', 2)
+            ->assertJsonPath('requested', [])
+            ->assertJsonPath('missing', [])
+            ->assertJsonPath('stores.0.store.store_number', $this->store->store_number)
+            ->assertJsonPath('stores.1.store.store_number', $store2->store_number);
+    }
+
+    public function test_bulk_live_sensors_requires_a_token(): void
+    {
+        $this->getJson('/api/stores/sensors')
+            ->assertUnauthorized()
+            ->assertJsonPath('message', 'Missing Bearer token');
+    }
+
     private function seedStoreFixture(): void
     {
         $credential = YoSmartCredential::create([

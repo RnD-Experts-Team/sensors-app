@@ -55,9 +55,11 @@ Route::middleware(['auth', 'verified'])->prefix('api/settings')->group(function 
 Route::middleware(['auth', 'verified'])->prefix('api/stores')->group(function () {
     Route::get('/', [App\Http\Controllers\StoreController::class, 'index'])->name('stores.index');
     Route::post('/', [App\Http\Controllers\StoreController::class, 'store'])->name('stores.store');
-    Route::get('/{store}', [App\Http\Controllers\StoreController::class, 'show'])->name('stores.show');
-    Route::put('/{store}', [App\Http\Controllers\StoreController::class, 'update'])->name('stores.update');
-    Route::delete('/{store}', [App\Http\Controllers\StoreController::class, 'destroy'])->name('stores.destroy');
+    // {store} is bound by integer id; constrain to digits so sibling paths
+    // like the public GET /api/stores/sensors are not shadowed by this route.
+    Route::get('/{store}', [App\Http\Controllers\StoreController::class, 'show'])->whereNumber('store')->name('stores.show');
+    Route::put('/{store}', [App\Http\Controllers\StoreController::class, 'update'])->whereNumber('store')->name('stores.update');
+    Route::delete('/{store}', [App\Http\Controllers\StoreController::class, 'destroy'])->whereNumber('store')->name('stores.destroy');
 });
 
 // YoSmart Credential Management Routes (admin, behind auth)
