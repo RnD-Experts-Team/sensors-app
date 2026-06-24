@@ -9,8 +9,19 @@ use Illuminate\Support\Facades\Log;
 class YoSmartService
 {
     private const TOKEN_URL = 'https://api.yosmart.com/open/yolink/token';
-    private const API_URL   = 'https://api.yosmart.com/open/yolink/v2/api';
+
+    private const API_URL = 'https://api.yosmart.com/open/yolink/v2/api';
+
     private const CACHE_TTL = 3600;
+
+    /** TTL (seconds) for cached live device state — Layer 1 rate-limit guard. */
+    private const STATE_CACHE_TTL = 60;
+
+    /** How long (seconds) to stop calling YoSmart after a rate-limit (010301). */
+    private const COOLDOWN_TTL = 60;
+
+    /** YoSmart error code: "Access denied due to limits reached, please retry later". */
+    public const RATE_LIMIT_CODE = '010301';
 
     /** Error codes that mean the access token must be refreshed. */
     private const TOKEN_ERROR_CODES = [
@@ -23,39 +34,40 @@ class YoSmartService
      * Each device type has its own `{Type}.getState` endpoint.
      */
     private const DEVICE_TYPE_MAP = [
-        'Hub'                  => 'Hub',
-        'CellularHub'          => 'CellularHub',
-        'SpeakerHub'           => 'SpeakerHub',
-        'THSensor'             => 'THSensor',
-        'DoorSensor'           => 'DoorSensor',
-        'MotionSensor'         => 'MotionSensor',
-        'LeakSensor'           => 'LeakSensor',
-        'VibrationSensor'      => 'VibrationSensor',
-        'COSmokeSensor'        => 'COSmokeSensor',
-        'SmartRemoter'         => 'SmartRemoter',
-        'InfraredRemoter'      => 'InfraredRemoter',
-        'Outlet'               => 'Outlet',
-        'MultiOutlet'          => 'MultiOutlet',
-        'Switch'               => 'Switch',
-        'Dimmer'               => 'Dimmer',
-        'Lock'                 => 'Lock',
-        'LockV2'               => 'LockV2',
-        'GarageDoor'           => 'GarageDoor',
-        'Finger'               => 'Finger',
-        'Siren'                => 'Siren',
-        'Manipulator'          => 'Manipulator',
-        'Sprinkler'            => 'Sprinkler',
-        'SprinklerV2'          => 'SprinklerV2',
-        'Thermostat'           => 'Thermostat',
-        'IPCamera'             => 'IPCamera',
-        'PowerFailureAlarm'    => 'PowerFailureAlarm',
-        'SoilThcSensor'        => 'SoilThcSensor',
-        'WaterDepthSensor'     => 'WaterDepthSensor',
+        'Hub' => 'Hub',
+        'CellularHub' => 'CellularHub',
+        'SpeakerHub' => 'SpeakerHub',
+        'THSensor' => 'THSensor',
+        'DoorSensor' => 'DoorSensor',
+        'MotionSensor' => 'MotionSensor',
+        'LeakSensor' => 'LeakSensor',
+        'VibrationSensor' => 'VibrationSensor',
+        'COSmokeSensor' => 'COSmokeSensor',
+        'SmartRemoter' => 'SmartRemoter',
+        'InfraredRemoter' => 'InfraredRemoter',
+        'Outlet' => 'Outlet',
+        'MultiOutlet' => 'MultiOutlet',
+        'Switch' => 'Switch',
+        'Dimmer' => 'Dimmer',
+        'Lock' => 'Lock',
+        'LockV2' => 'LockV2',
+        'GarageDoor' => 'GarageDoor',
+        'Finger' => 'Finger',
+        'Siren' => 'Siren',
+        'Manipulator' => 'Manipulator',
+        'Sprinkler' => 'Sprinkler',
+        'SprinklerV2' => 'SprinklerV2',
+        'Thermostat' => 'Thermostat',
+        'IPCamera' => 'IPCamera',
+        'PowerFailureAlarm' => 'PowerFailureAlarm',
+        'SoilThcSensor' => 'SoilThcSensor',
+        'WaterDepthSensor' => 'WaterDepthSensor',
         'WaterMeterController' => 'WaterMeterController',
-        'CSDevice'             => 'CSDevice',
+        'CSDevice' => 'CSDevice',
     ];
 
     private string $tokenCacheKey;
+
     private string $devicesCacheKey;
 
     public function __construct(
@@ -63,7 +75,7 @@ class YoSmartService
         private readonly string $secret,
         private readonly int $credentialId,
     ) {
-        $this->tokenCacheKey   = "yosmart_access_token_{$credentialId}";
+        $this->tokenCacheKey = "yosmart_access_token_{$credentialId}";
         $this->devicesCacheKey = "yosmart_devices_{$credentialId}";
     }
 
@@ -77,6 +89,7 @@ class YoSmartService
 
         if ($token) {
             Log::debug('YoSmart: using cached token', ['credential_id' => $this->credentialId]);
+
             return $token;
         }
 
@@ -97,14 +110,14 @@ class YoSmartService
             Log::info('YoSmart: fetching new access token', ['credential_id' => $this->credentialId]);
 
             $response = Http::asForm()->post(self::TOKEN_URL, [
-                'grant_type'    => 'client_credentials',
-                'client_id'     => $this->uaid,
+                'grant_type' => 'client_credentials',
+                'client_id' => $this->uaid,
                 'client_secret' => $this->secret,
             ]);
 
             if ($response->successful()) {
-                $data      = $response->json();
-                $token     = $data['access_token'] ?? null;
+                $data = $response->json();
+                $token = $data['access_token'] ?? null;
                 $expiresIn = $data['expires_in'] ?? 3600;
 
                 if ($token) {
@@ -113,7 +126,7 @@ class YoSmartService
 
                     Log::info('YoSmart: token obtained', [
                         'credential_id' => $this->credentialId,
-                        'expires_in'    => $expiresIn,
+                        'expires_in' => $expiresIn,
                     ]);
 
                     return $token;
@@ -122,13 +135,13 @@ class YoSmartService
 
             Log::error('YoSmart: token response error', [
                 'credential_id' => $this->credentialId,
-                'status'   => $response->status(),
-                'body'     => $response->body(),
+                'status' => $response->status(),
+                'body' => $response->body(),
             ]);
         } catch (\Exception $e) {
             Log::error('YoSmart: token fetch exception', [
                 'credential_id' => $this->credentialId,
-                'error'    => $e->getMessage(),
+                'error' => $e->getMessage(),
             ]);
         }
 
@@ -150,12 +163,13 @@ class YoSmartService
     ): ?array {
         $token = $this->getAccessToken();
 
-        if (!$token) {
+        if (! $token) {
             Log::error('YoSmart: no access token available', ['credential_id' => $this->credentialId]);
+
             return null;
         }
 
-        $url     = $url ?? self::API_URL;
+        $url = $url ?? self::API_URL;
         $payload = array_merge(
             ['method' => $method, 'time' => intval(microtime(true) * 1000)],
             $params,
@@ -164,32 +178,33 @@ class YoSmartService
         try {
             Log::debug('YoSmart: calling API', [
                 'credential_id' => $this->credentialId,
-                'method'   => $method,
-                'isRetry'  => $isRetry,
+                'method' => $method,
+                'isRetry' => $isRetry,
             ]);
 
             $response = Http::withHeaders([
-                'Content-Type'  => 'application/json',
+                'Content-Type' => 'application/json',
                 'Authorization' => "Bearer {$token}",
             ])->timeout(10)->post($url, $payload);
 
             if ($response->successful()) {
                 $result = $response->json();
-                $code   = $result['code'] ?? null;
+                $code = $result['code'] ?? null;
 
                 if ($code === '000000') {
                     Log::debug('YoSmart: API call successful', [
                         'credential_id' => $this->credentialId,
-                        'method'   => $method,
+                        'method' => $method,
                     ]);
+
                     return $result;
                 }
 
-                if (!$isRetry && in_array($code, self::TOKEN_ERROR_CODES, true)) {
+                if (! $isRetry && in_array($code, self::TOKEN_ERROR_CODES, true)) {
                     Log::warning('YoSmart: token error, refreshing', [
                         'credential_id' => $this->credentialId,
-                        'method'   => $method,
-                        'code'     => $code,
+                        'method' => $method,
+                        'code' => $code,
                     ]);
                     $newToken = $this->refreshAccessToken();
                     if ($newToken) {
@@ -199,9 +214,9 @@ class YoSmartService
 
                 Log::warning('YoSmart: API error response', [
                     'credential_id' => $this->credentialId,
-                    'method'   => $method,
-                    'code'     => $code,
-                    'desc'     => $result['desc'] ?? 'No description',
+                    'method' => $method,
+                    'code' => $code,
+                    'desc' => $result['desc'] ?? 'No description',
                 ]);
 
                 return $result;
@@ -209,14 +224,14 @@ class YoSmartService
 
             Log::error('YoSmart: HTTP error', [
                 'credential_id' => $this->credentialId,
-                'status'   => $response->status(),
-                'body'     => $response->body(),
+                'status' => $response->status(),
+                'body' => $response->body(),
             ]);
         } catch (\Exception $e) {
             Log::error('YoSmart: callApi exception', [
                 'credential_id' => $this->credentialId,
-                'method'   => $method,
-                'error'    => $e->getMessage(),
+                'method' => $method,
+                'error' => $e->getMessage(),
             ]);
         }
 
@@ -234,6 +249,7 @@ class YoSmartService
         if ($result && ($result['code'] ?? null) === '000000') {
             $devices = $result['data']['devices'] ?? [];
             Cache::put($this->devicesCacheKey, $devices, self::CACHE_TTL);
+
             return $devices;
         }
 
@@ -249,20 +265,92 @@ class YoSmartService
             : null;
     }
 
+    /**
+     * Read a single device's live state with built-in rate-limit protection:
+     *
+     *  - Layer 1: serves a cached state (≤ STATE_CACHE_TTL seconds old) without
+     *    calling YoSmart, collapsing bursts of reads into one upstream request.
+     *  - Layer 3: when YoSmart replies 010301 (rate limit reached) it opens a
+     *    short cooldown for this credential; while the cooldown is active no
+     *    upstream calls are made at all, so we stop digging into the limit.
+     *
+     * Returns a structured result; the caller decides how to present a failure
+     * (e.g. fall back to the last persisted reading):
+     *   ['ok' => bool, 'source' => 'cache'|'live'|'cooldown'|'rate_limited'|'error',
+     *    'code' => ?string, 'data' => ?array, 'desc' => ?string]
+     */
+    public function getDeviceState(string $deviceType, string $deviceId, string $deviceToken): array
+    {
+        $stateKey = "yosmart_state_{$this->credentialId}_{$deviceId}";
+        $cooldownKey = "yosmart_cooldown_{$this->credentialId}";
+
+        // Layer 1 — fresh cached state.
+        $cached = Cache::get($stateKey);
+        if (is_array($cached)) {
+            return $this->stateResult(true, 'cache', $cached);
+        }
+
+        // Layer 3 — account is cooling down after a recent rate limit.
+        if (Cache::get($cooldownKey)) {
+            return $this->stateResult(false, 'cooldown', null);
+        }
+
+        $result = $this->callApi($this->resolveGetStateMethod($deviceType), [
+            'targetDevice' => $deviceId,
+            'token' => $deviceToken,
+        ]);
+
+        $code = $result['code'] ?? null;
+
+        if ($code === '000000') {
+            Cache::put($stateKey, $result, self::STATE_CACHE_TTL);
+
+            return $this->stateResult(true, 'live', $result);
+        }
+
+        if ($code === self::RATE_LIMIT_CODE) {
+            Cache::put($cooldownKey, true, self::COOLDOWN_TTL);
+            Log::warning('YoSmart: rate limit reached, cooldown engaged', [
+                'credential_id' => $this->credentialId,
+                'device_id' => $deviceId,
+                'cooldown_secs' => self::COOLDOWN_TTL,
+            ]);
+
+            return $this->stateResult(false, 'rate_limited', $result);
+        }
+
+        return $this->stateResult(false, 'error', is_array($result) ? $result : null);
+    }
+
+    /**
+     * @return array{ok: bool, source: string, code: ?string, data: ?array, desc: ?string}
+     */
+    private function stateResult(bool $ok, string $source, ?array $result): array
+    {
+        return [
+            'ok' => $ok,
+            'source' => $source,
+            'code' => $result['code'] ?? null,
+            'data' => $result['data'] ?? null,
+            'desc' => $result['desc'] ?? null,
+        ];
+    }
+
     public function resolveGetStateMethod(string $deviceType): string
     {
         if (isset(self::DEVICE_TYPE_MAP[$deviceType])) {
-            return self::DEVICE_TYPE_MAP[$deviceType] . '.getState';
+            return self::DEVICE_TYPE_MAP[$deviceType].'.getState';
         }
 
         foreach (self::DEVICE_TYPE_MAP as $key => $prefix) {
             if (strcasecmp($key, $deviceType) === 0) {
-                return $prefix . '.getState';
+                return $prefix.'.getState';
             }
         }
 
         Log::warning("YoSmart: unknown device type '{$deviceType}', using as-is");
-        return $deviceType . '.getState';
+
+        return $deviceType.'.getState';
     }
 
     public function getErrorHint(string $errorCode): string
@@ -290,44 +378,45 @@ class YoSmartService
      * Fetch states for multiple devices concurrently using HTTP pool.
      *
      * @param  array  $devices  Array of devices from Home.getDeviceList
-     * @return array  Array of state results keyed by deviceId
+     * @return array Array of state results keyed by deviceId
      */
     public function batchGetStates(array $devices): array
     {
         $token = $this->getAccessToken();
-        if (!$token) {
+        if (! $token) {
             return [];
         }
 
         // Build requests grouped by device
         $deviceMap = [];
         foreach ($devices as $device) {
-            $deviceId   = $device['deviceId'];
+            $deviceId = $device['deviceId'];
             $deviceType = $device['type'] ?? 'unknown';
-            $devToken   = $device['token'] ?? null;
+            $devToken = $device['token'] ?? null;
 
-            if (!$devToken) {
+            if (! $devToken) {
                 $deviceMap[$deviceId] = [
-                    'deviceId'   => $deviceId,
+                    'deviceId' => $deviceId,
                     'deviceType' => $deviceType,
-                    'name'       => $device['name'] ?? '',
-                    'modelName'  => $device['modelName'] ?? '',
-                    'success'    => false,
-                    'error'      => 'No token available',
+                    'name' => $device['name'] ?? '',
+                    'modelName' => $device['modelName'] ?? '',
+                    'success' => false,
+                    'error' => 'No token available',
                 ];
+
                 continue;
             }
 
             $deviceMap[$deviceId] = [
-                'device'   => $device,
-                'method'   => $this->resolveGetStateMethod($deviceType),
+                'device' => $device,
+                'method' => $this->resolveGetStateMethod($deviceType),
                 'devToken' => $devToken,
             ];
         }
 
         // Separate devices that need API calls from those that already have results
-        $toFetch = array_filter($deviceMap, fn($d) => isset($d['method']));
-        $results = array_filter($deviceMap, fn($d) => !isset($d['method']));
+        $toFetch = array_filter($deviceMap, fn ($d) => isset($d['method']));
+        $results = array_filter($deviceMap, fn ($d) => ! isset($d['method']));
 
         if (empty($toFetch)) {
             return array_values($results);
@@ -338,57 +427,57 @@ class YoSmartService
             foreach ($toFetch as $deviceId => $info) {
                 $pool->as($deviceId)
                     ->withHeaders([
-                        'Content-Type'  => 'application/json',
+                        'Content-Type' => 'application/json',
                         'Authorization' => "Bearer {$token}",
                     ])
                     ->timeout(10)
                     ->post(self::API_URL, [
-                        'method'       => $info['method'],
-                        'time'         => intval(microtime(true) * 1000),
+                        'method' => $info['method'],
+                        'time' => intval(microtime(true) * 1000),
                         'targetDevice' => $deviceId,
-                        'token'        => $info['devToken'],
+                        'token' => $info['devToken'],
                     ]);
             }
         });
 
         // Process responses
         foreach ($toFetch as $deviceId => $info) {
-            $device     = $info['device'];
+            $device = $info['device'];
             $deviceType = $device['type'] ?? 'unknown';
-            $response   = $responses[$deviceId] ?? null;
+            $response = $responses[$deviceId] ?? null;
 
             if ($response && $response->successful()) {
                 $result = $response->json();
                 if (($result['code'] ?? null) === '000000') {
                     $results[$deviceId] = [
-                        'deviceId'   => $deviceId,
+                        'deviceId' => $deviceId,
                         'deviceType' => $deviceType,
-                        'name'       => $device['name'] ?? '',
-                        'modelName'  => $device['modelName'] ?? '',
-                        'success'    => true,
-                        'state'      => $result['data'] ?? null,
-                        'method'     => $info['method'],
+                        'name' => $device['name'] ?? '',
+                        'modelName' => $device['modelName'] ?? '',
+                        'success' => true,
+                        'state' => $result['data'] ?? null,
+                        'method' => $info['method'],
                     ];
                 } else {
                     $results[$deviceId] = [
-                        'deviceId'   => $deviceId,
+                        'deviceId' => $deviceId,
                         'deviceType' => $deviceType,
-                        'name'       => $device['name'] ?? '',
-                        'modelName'  => $device['modelName'] ?? '',
-                        'success'    => false,
-                        'error'      => $result['desc'] ?? 'Unknown error',
-                        'code'       => $result['code'] ?? 'unknown',
-                        'method'     => $info['method'],
+                        'name' => $device['name'] ?? '',
+                        'modelName' => $device['modelName'] ?? '',
+                        'success' => false,
+                        'error' => $result['desc'] ?? 'Unknown error',
+                        'code' => $result['code'] ?? 'unknown',
+                        'method' => $info['method'],
                     ];
                 }
             } else {
                 $results[$deviceId] = [
-                    'deviceId'   => $deviceId,
+                    'deviceId' => $deviceId,
                     'deviceType' => $deviceType,
-                    'name'       => $device['name'] ?? '',
-                    'modelName'  => $device['modelName'] ?? '',
-                    'success'    => false,
-                    'error'      => 'HTTP request failed',
+                    'name' => $device['name'] ?? '',
+                    'modelName' => $device['modelName'] ?? '',
+                    'success' => false,
+                    'error' => 'HTTP request failed',
                 ];
             }
         }
@@ -398,7 +487,7 @@ class YoSmartService
 
     public function hasCredentials(): bool
     {
-        return !empty($this->uaid) && !empty($this->secret);
+        return ! empty($this->uaid) && ! empty($this->secret);
     }
 
     public function getUaid(): string

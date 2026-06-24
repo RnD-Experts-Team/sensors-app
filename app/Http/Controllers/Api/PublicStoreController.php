@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
+use App\Models\SensorReport;
 use App\Models\Store;
 use App\Models\StoreDevice;
 use App\Services\YoSmartService;
@@ -161,36 +162,99 @@ class PublicStoreController extends Controller
 
     /**
      * Fetch and shape the live state for a single device.
+     *
+     * Uses the rate-limit-protected reader (cache + cooldown). When live state
+     * is unavailable (rate-limited, cooling down, or errored), falls back to the
+     * device's last persisted reading so the caller still gets usable data
+     * instead of an error — clearly flagged via `source` / `stale` / `notice`.
      */
     private function deviceLiveEntry(YoSmartService $service, StoreDevice $device, string $targetUnit): array
     {
-        $method = $this->resolveGetStateMethod($device->device_type);
-
-        $state = $this->fetchDeviceState(
-            $service,
-            $method,
+        $result = $service->getDeviceState(
+            $device->device_type,
             $device->device_id,
             $device->device_token,
         );
 
-        $rawState = $state['data']['state'] ?? null;
+        if (! $result['ok']) {
+            return $this->lastReportEntry($device, $targetUnit, $result);
+        }
+
+        $data = $result['data'] ?? [];
+        $rawState = $data['state'] ?? null;
         $rawTemp = is_array($rawState) ? ($rawState['temperature'] ?? null) : null;
 
+        return $this->deviceMeta($device, $targetUnit) + [
+            'online' => $data['online'] ?? null,
+            'temperature' => AppSetting::convertTemp($rawTemp, 'c', $targetUnit),
+            'state' => $rawState,
+            'reported_at' => $data['reportAt'] ?? null,
+            'source' => $result['source'],   // 'live' | 'cache'
+            'stale' => false,
+            'as_of' => $data['reportAt'] ?? null,
+            'success' => true,
+            'error' => null,
+            'notice' => null,
+        ];
+    }
+
+    /**
+     * Build a device entry from its most recent persisted SensorReport, used
+     * when live state can't be fetched. Returns an `unavailable` entry if the
+     * device has never been recorded.
+     */
+    private function lastReportEntry(StoreDevice $device, string $targetUnit, array $result): array
+    {
+        $rateLimited = in_array($result['source'], ['rate_limited', 'cooldown'], true);
+        $notice = $rateLimited
+            ? 'Live data temporarily rate-limited; showing the last recorded reading.'
+            : 'Live data unavailable; showing the last recorded reading.';
+
+        $report = SensorReport::where('store_device_id', $device->id)
+            ->latest('recorded_at')
+            ->first();
+
+        if (! $report) {
+            return $this->deviceMeta($device, $targetUnit) + [
+                'online' => null,
+                'temperature' => null,
+                'state' => null,
+                'reported_at' => null,
+                'source' => 'unavailable',
+                'stale' => true,
+                'as_of' => null,
+                'success' => false,
+                'error' => $result['desc'] ?? ($rateLimited ? 'Rate limited, please retry later.' : 'Device state unavailable.'),
+                'notice' => $notice,
+            ];
+        }
+
+        return $this->deviceMeta($device, $targetUnit) + [
+            'online' => $report->online,
+            'temperature' => AppSetting::convertTemp($report->temperature, $report->temperature_unit, $targetUnit),
+            'state' => $report->state,
+            'reported_at' => $report->reported_at?->toIso8601String(),
+            'source' => 'last_report',
+            'stale' => true,
+            'as_of' => $report->recorded_at?->toIso8601String(),
+            'success' => true,
+            'error' => null,
+            'notice' => $notice,
+        ];
+    }
+
+    /**
+     * The static identity fields shared by every device entry shape.
+     */
+    private function deviceMeta(StoreDevice $device, string $targetUnit): array
+    {
         return [
             'device_id' => $device->device_id,
             'device_name' => $device->device_name,
             'device_type' => $device->device_type,
             'model_name' => $device->model_name,
             'is_hub' => $device->is_hub,
-            'online' => $state['data']['online'] ?? null,
-            'temperature' => AppSetting::convertTemp($rawTemp, 'c', $targetUnit),
             'temperature_unit' => $targetUnit,
-            'state' => $rawState,
-            'reported_at' => $state['data']['reportAt'] ?? null,
-            'success' => ($state['code'] ?? null) === '000000',
-            'error' => ($state['code'] ?? null) !== '000000'
-                ? ($state['desc'] ?? 'Unknown error')
-                : null,
         ];
     }
 
@@ -220,24 +284,5 @@ class PublicStoreController extends Controller
         $unit = strtoupper($request->input('unit', 'C'));
 
         return in_array($unit, ['C', 'F'], true) ? $unit : 'C';
-    }
-
-    private function resolveGetStateMethod(string $deviceType): string
-    {
-        return $deviceType.'.getState';
-    }
-
-    private function fetchDeviceState(
-        YoSmartService $service,
-        string $method,
-        string $deviceId,
-        string $deviceToken,
-    ): array {
-        $result = $service->callApi($method, [
-            'targetDevice' => $deviceId,
-            'token' => $deviceToken,
-        ]);
-
-        return $result ?? ['code' => 'error', 'desc' => 'API call returned null'];
     }
 }

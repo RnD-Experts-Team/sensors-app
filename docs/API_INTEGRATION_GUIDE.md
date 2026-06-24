@@ -855,6 +855,34 @@ Authorization: Bearer {token}
 > service `sensors-app` access to `GET /api/stores/sensors` (route
 > `api.stores.sensors.bulk`), otherwise a valid token returns `403`.
 
+#### Live-data freshness & rate limiting (both sensor endpoints)
+
+YoSmart (YoLink) enforces an upstream rate limit. To stay under it and to keep
+the API usable when it is hit, every device entry returned by the live sensor
+endpoints carries freshness metadata:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `source` | string | Where the reading came from: `live` (just fetched), `cache` (served from a ≤60s cache), `last_report` (rate-limited/unavailable → last stored reading), or `unavailable` (no live data and nothing ever recorded). |
+| `stale` | bool | `true` when the value is a `last_report`/`unavailable` fallback rather than current live/cached data. |
+| `as_of` | string\|null | ISO-8601 timestamp the reading is accurate as of. |
+| `notice` | string\|null | Human-readable reason when `stale` (e.g. rate-limited); `null` on fresh reads. |
+
+Behavior:
+
+- **Caching:** each device's live state is cached for ~60s, so repeated calls
+  don't re-hit YoSmart. The response stays `200`; `source` becomes `cache`.
+- **Rate limited (YoSmart `010301`):** the device falls back to its last stored
+  reading — `source: "last_report"`, `stale: true`, with a `notice`. The request
+  still returns `200`; render the value with an "updated `as_of`" indicator
+  rather than an error. After a rate limit, the API briefly stops calling
+  YoSmart (cooldown) and serves cached/last-report data so the limit can recover.
+- **No data at all:** if a device is rate-limited/unreachable **and** has never
+  been recorded, its entry is `source: "unavailable"`, `success: false`.
+
+> **Frontend tip:** treat `stale === true` as "show last value + subtle 'live
+> refresh paused' badge", not as an error. The request itself is still `200`.
+
 ### 5.2 Reports
 
 #### Aggregated Report

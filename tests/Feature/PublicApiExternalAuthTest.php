@@ -250,6 +250,119 @@ class PublicApiExternalAuthTest extends TestCase
             ->assertJsonPath('message', 'Missing Bearer token');
     }
 
+    public function test_live_sensors_fall_back_to_last_report_when_rate_limited(): void
+    {
+        // YoSmart returns 010301 (rate limit) for every device-state call.
+        $this->fakeRateLimitedYoSmart();
+
+        $this->withToken('valid-user-token')
+            ->getJson("/api/stores/{$this->store->store_number}/sensors?unit=F")
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('sensors.0.source', 'last_report')
+            ->assertJsonPath('sensors.0.stale', true)
+            ->assertJsonPath('sensors.0.success', true)
+            // latest persisted report for the sensor is 5.80°C → 42.44°F
+            ->assertJsonPath('sensors.0.temperature', 42.44)
+            ->assertJsonPath('sensors.0.notice', 'Live data temporarily rate-limited; showing the last recorded reading.');
+    }
+
+    public function test_live_sensor_state_is_cached_within_ttl(): void
+    {
+        $stateCalls = 0;
+
+        Http::fake(function (ClientRequest $request) use (&$stateCalls) {
+            if ($request->url() === 'https://auth.example.test/api/v1/auth/token-verify') {
+                return Http::response($this->verifyBody(), 200);
+            }
+            if ($request->url() === 'https://api.yosmart.com/open/yolink/token') {
+                return Http::response(['access_token' => 'yosmart-access-token', 'expires_in' => 3600], 200);
+            }
+            if ($request->url() === 'https://api.yosmart.com/open/yolink/v2/api') {
+                $stateCalls++;
+
+                return Http::response($this->yosmartStateResponse($request->data()), 200);
+            }
+
+            return Http::response(['error' => 'Unexpected URL: '.$request->url()], 500);
+        });
+
+        $url = "/api/stores/{$this->store->store_number}/sensors";
+
+        $this->withToken('valid-user-token')->getJson($url)->assertOk()->assertJsonPath('sensors.0.source', 'live');
+        $this->withToken('valid-user-token')->getJson($url)->assertOk()->assertJsonPath('sensors.0.source', 'cache');
+
+        // 2 devices fetched once each on the first call; the second call is served from cache.
+        $this->assertSame(2, $stateCalls);
+    }
+
+    public function test_rate_limit_engages_cooldown_and_stops_calling_upstream(): void
+    {
+        $stateCalls = 0;
+
+        Http::fake(function (ClientRequest $request) use (&$stateCalls) {
+            if ($request->url() === 'https://auth.example.test/api/v1/auth/token-verify') {
+                return Http::response($this->verifyBody(), 200);
+            }
+            if ($request->url() === 'https://api.yosmart.com/open/yolink/token') {
+                return Http::response(['access_token' => 'yosmart-access-token', 'expires_in' => 3600], 200);
+            }
+            if ($request->url() === 'https://api.yosmart.com/open/yolink/v2/api') {
+                $stateCalls++;
+
+                return Http::response([
+                    'code' => '010301',
+                    'desc' => 'Access denied due to limits reached, Please retry later',
+                ], 200);
+            }
+
+            return Http::response(['error' => 'Unexpected URL: '.$request->url()], 500);
+        });
+
+        $this->withToken('valid-user-token')
+            ->getJson("/api/stores/{$this->store->store_number}/sensors")
+            ->assertOk()
+            ->assertJsonPath('sensors.0.source', 'last_report');
+
+        // The first device hit the limit and engaged the cooldown; the remaining
+        // device(s) were served from the last report WITHOUT calling YoSmart again.
+        $this->assertSame(1, $stateCalls);
+    }
+
+    private function fakeRateLimitedYoSmart(): void
+    {
+        Http::fake(function (ClientRequest $request) {
+            if ($request->url() === 'https://auth.example.test/api/v1/auth/token-verify') {
+                return Http::response($this->verifyBody(), 200);
+            }
+            if ($request->url() === 'https://api.yosmart.com/open/yolink/token') {
+                return Http::response(['access_token' => 'yosmart-access-token', 'expires_in' => 3600], 200);
+            }
+            if ($request->url() === 'https://api.yosmart.com/open/yolink/v2/api') {
+                return Http::response([
+                    'code' => '010301',
+                    'desc' => 'Access denied due to limits reached, Please retry later',
+                ], 200);
+            }
+
+            return Http::response(['error' => 'Unexpected URL: '.$request->url()], 500);
+        });
+    }
+
+    private function verifyBody(bool $active = true, bool $authorized = true): array
+    {
+        return [
+            'active' => $active,
+            'user' => ['id' => 123],
+            'roles' => ['api-consumer'],
+            'permissions' => ['stores.read'],
+            'ext' => [
+                'authorized' => $authorized,
+                'required_permissions' => ['stores.read'],
+            ],
+        ];
+    }
+
     private function seedStoreFixture(): void
     {
         $credential = YoSmartCredential::create([
