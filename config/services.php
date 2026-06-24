@@ -40,9 +40,12 @@ return [
         'secret' => env('YOSMART_SECRET'),
 
         // Live-read tuning. YoLink limits a UAC to ~5 concurrent connections, so
-        // device-state reads are fetched in chunks of this many concurrent
-        // requests. chunk_delay_ms optionally paces successive chunks.
+        // each pool round issues at most this many requests. Reads are
+        // interleaved across hubs: per_hub_concurrency caps how many of a single
+        // hub's devices may be queried at once (keep low — sensors relay through
+        // the hub). chunk_delay_ms optionally paces successive rounds.
         'state_chunk_size' => (int) env('YOSMART_STATE_CHUNK_SIZE', 5),
+        'per_hub_concurrency' => (int) env('YOSMART_PER_HUB_CONCURRENCY', 1),
         'chunk_delay_ms' => (int) env('YOSMART_CHUNK_DELAY_MS', 0),
     ],
 

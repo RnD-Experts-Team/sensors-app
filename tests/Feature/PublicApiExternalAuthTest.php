@@ -348,14 +348,16 @@ class PublicApiExternalAuthTest extends TestCase
 
         $url = "/api/stores/{$this->store->store_number}/sensors";
 
-        // First request: both devices fetched in one chunk (2 calls), cooldown set.
+        // First request: trips the limit and engages the cooldown.
         $this->withToken('valid-user-token')->getJson($url)->assertOk();
-        // Second request: cooldown active -> served from last report, no upstream calls.
+        $afterFirst = $stateCalls;
+
+        // Second request: cooldown active -> served from fallback, no upstream calls.
         $this->withToken('valid-user-token')->getJson($url)
             ->assertOk()
             ->assertJsonPath('sensors.0.stale', true);
 
-        $this->assertSame(2, $stateCalls);
+        $this->assertSame($afterFirst, $stateCalls);
     }
 
     public function test_device_states_are_fetched_in_bounded_chunks(): void
@@ -369,6 +371,7 @@ class PublicApiExternalAuthTest extends TestCase
                 'credential_id' => $credential->id,
                 'store_id' => $this->store->id,
                 'device_id' => "sensor-00{$n}",
+                'parent_device_id' => 'hub-001',
                 'device_token' => "sensor-00{$n}-token",
                 'device_type' => 'THSensor',
                 'device_name' => "freezer extra {$n}",
@@ -405,6 +408,51 @@ class PublicApiExternalAuthTest extends TestCase
 
         // Every device was fetched exactly once across the chunks.
         $this->assertSame(6, $stateCalls);
+    }
+
+    public function test_devices_from_multiple_hubs_are_all_fetched(): void
+    {
+        // A second hub with its own sensors, all under one credential/store.
+        $credential = YoSmartCredential::query()->firstOrFail();
+
+        StoreDevice::create([
+            'credential_id' => $credential->id,
+            'store_id' => $this->store->id,
+            'device_id' => 'hub-002',
+            'device_token' => 'hub-002-token',
+            'device_type' => 'Hub',
+            'device_name' => 'YoLink Hub 2',
+            'model_name' => 'YS1603-UC',
+            'is_hub' => true,
+            'parsed_store_number' => $this->store->store_number,
+        ]);
+        foreach (['sensor-101', 'sensor-102'] as $id) {
+            StoreDevice::create([
+                'credential_id' => $credential->id,
+                'store_id' => $this->store->id,
+                'device_id' => $id,
+                'parent_device_id' => 'hub-002',
+                'device_token' => "{$id}-token",
+                'device_type' => 'THSensor',
+                'device_name' => "freezer {$id}",
+                'model_name' => 'YS8003-UC',
+                'is_hub' => false,
+                'parsed_store_number' => $this->store->store_number,
+            ]);
+        }
+
+        $stateCalls = 0;
+        Http::fake($this->successfulYoSmartHandler($stateCalls));
+
+        // 2 hubs + (sensor-001 under hub-001) + (101,102 under hub-002) = 5 devices.
+        $this->withToken('valid-user-token')
+            ->getJson("/api/stores/{$this->store->store_number}/sensors")
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('count', 3);
+
+        // Every device across both hubs fetched exactly once.
+        $this->assertSame(5, $stateCalls);
     }
 
     /**
@@ -520,6 +568,7 @@ class PublicApiExternalAuthTest extends TestCase
             'credential_id' => $credential->id,
             'store_id' => $this->store->id,
             'device_id' => 'sensor-001',
+            'parent_device_id' => 'hub-001',
             'device_token' => 'sensor-token',
             'device_type' => 'THSensor',
             'device_name' => 'freezer 03795-00038',

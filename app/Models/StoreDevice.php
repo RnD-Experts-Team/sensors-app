@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class StoreDevice extends Model
 {
@@ -14,6 +15,7 @@ class StoreDevice extends Model
         'credential_id',
         'store_id',
         'device_id',
+        'parent_device_id',
         'device_token',
         'device_type',
         'device_name',
@@ -43,6 +45,23 @@ class StoreDevice extends Model
     public function store(): BelongsTo
     {
         return $this->belongsTo(Store::class);
+    }
+
+    /**
+     * The hub a sensor relays through (matched on YoLink's device_id string).
+     * Null for hubs and for devices synced before parent_device_id existed.
+     */
+    public function parentHub(): BelongsTo
+    {
+        return $this->belongsTo(StoreDevice::class, 'parent_device_id', 'device_id');
+    }
+
+    /**
+     * The sensors that relay through this hub.
+     */
+    public function childDevices(): HasMany
+    {
+        return $this->hasMany(StoreDevice::class, 'parent_device_id', 'device_id');
     }
 
     /**

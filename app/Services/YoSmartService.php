@@ -26,10 +26,17 @@ class YoSmartService
     public const RATE_LIMIT_CODE = '010301';
 
     /**
-     * Default number of device-state requests fetched concurrently per chunk.
+     * Default number of distinct hubs fetched in parallel per pool round.
      * YoLink limits a UAC to ~5 concurrent connections, so we cap at 5.
      */
     private const STATE_CHUNK_SIZE = 5;
+
+    /**
+     * Default max concurrent getState requests aimed at a SINGLE hub per round.
+     * Sensors relay through their hub's radio, so keep this low (1) to avoid
+     * 000201/020104 "device busy" errors; parallelism comes from many hubs.
+     */
+    private const PER_HUB_CONCURRENCY = 1;
 
     /** Error codes that mean the access token must be refreshed. */
     private const TOKEN_ERROR_CODES = [
@@ -294,9 +301,17 @@ class YoSmartService
      */
     public function getDeviceStates(array $devices, ?int $chunkSize = null): array
     {
-        $chunkSize = max(1, $chunkSize ?? (int) config('services.yosmart.state_chunk_size', self::STATE_CHUNK_SIZE));
+        $maxHubsPerRound = max(1, $chunkSize ?? (int) config('services.yosmart.state_chunk_size', self::STATE_CHUNK_SIZE));
+        $perHubConcurrency = max(1, (int) config('services.yosmart.per_hub_concurrency', self::PER_HUB_CONCURRENCY));
         $delayMs = max(0, (int) config('services.yosmart.chunk_delay_ms', 0));
         $cooldownKey = "yosmart_cooldown_{$this->credentialId}";
+
+        // hub_key groups a sensor with its hub; default to the device's own id
+        // so hubs and orphan/un-synced sensors each form their own group.
+        foreach ($devices as &$device) {
+            $device['hub_key'] = ($device['hub_key'] ?? null) ?: $device['device_id'];
+        }
+        unset($device);
 
         $results = [];
 
@@ -319,9 +334,10 @@ class YoSmartService
             return $results;
         }
 
-        // Live-first: fetch every device in bounded concurrent chunks. The cache
-        // is only consulted as a fallback (see resolveChunkResponse).
-        foreach (array_chunk($devices, $chunkSize) as $index => $chunk) {
+        // Live-first: fetch devices in hub-interleaved rounds (≤ perHubConcurrency
+        // per hub per round, ≤ maxHubsPerRound distinct hubs in parallel). The
+        // cache is only consulted as a fallback (see resolveChunkResponse).
+        foreach ($this->buildHubRounds($devices, $maxHubsPerRound, $perHubConcurrency) as $index => $chunk) {
             // A previous chunk tripped the limit — stop calling; use fallbacks.
             if (Cache::get($cooldownKey)) {
                 foreach ($chunk as $device) {
@@ -364,6 +380,59 @@ class YoSmartService
         }
 
         return $results;
+    }
+
+    /**
+     * Split a device list into hub-interleaved pool rounds. Each inner array is
+     * one Http::pool batch with these invariants:
+     *   - at most $perHubConcurrency devices from any single hub_key;
+     *   - at most $maxPerRound requests total (the UAC connection cap);
+     *   - every input device appears exactly once across all batches.
+     *
+     * Parallelism comes from spreading a batch across many hubs rather than
+     * piling requests onto one hub's radio relay.
+     *
+     * @param  array<int, array<string, mixed>>  $devices  each carrying a 'hub_key'
+     * @return array<int, array<int, array<string, mixed>>>
+     */
+    protected function buildHubRounds(array $devices, int $maxPerRound, int $perHubConcurrency): array
+    {
+        // Group by hub, preserving input order within each hub.
+        $groups = [];
+        foreach ($devices as $device) {
+            $groups[$device['hub_key']][] = $device;
+        }
+
+        $rounds = [];
+
+        while ($groups !== []) {
+            $batch = [];
+            $perHub = [];
+
+            // Round-robin across hubs, taking up to $perHubConcurrency from each,
+            // until the batch reaches the per-round request cap.
+            do {
+                $progressed = false;
+
+                foreach ($groups as $hubKey => $queue) {
+                    if (count($batch) >= $maxPerRound) {
+                        break;
+                    }
+                    if ($queue === [] || ($perHub[$hubKey] ?? 0) >= $perHubConcurrency) {
+                        continue;
+                    }
+
+                    $batch[] = array_shift($groups[$hubKey]);
+                    $perHub[$hubKey] = ($perHub[$hubKey] ?? 0) + 1;
+                    $progressed = true;
+                }
+            } while ($progressed && count($batch) < $maxPerRound);
+
+            $rounds[] = $batch;
+            $groups = array_filter($groups, fn ($queue) => $queue !== []);
+        }
+
+        return $rounds;
     }
 
     /**

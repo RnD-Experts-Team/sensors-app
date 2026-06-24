@@ -145,6 +145,11 @@ class PublicStoreController extends Controller
                     'device_type' => $device->device_type,
                     'device_id' => $device->device_id,
                     'device_token' => $device->device_token,
+                    // Group a sensor with its hub; hubs and un-synced sensors
+                    // fall back to their own id (their own group).
+                    'hub_key' => $device->is_hub
+                        ? $device->device_id
+                        : ($device->parent_device_id ?: $device->device_id),
                 ])->all(),
             );
 

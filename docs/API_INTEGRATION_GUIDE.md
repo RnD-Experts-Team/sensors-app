@@ -874,11 +874,16 @@ live read fails. The fallback order is **live → cache → last_report → unav
 
 Behavior:
 
-- **Live-first + chunked fetching:** device states are fetched fresh from
-  YoSmart in **bounded concurrent chunks** (default 5 at a time — YoLink caps a
-  UAC at ~5 connections) rather than all at once. This keeps data current and
-  avoids self-inflicting the rate limit. Tunable via `YOSMART_STATE_CHUNK_SIZE`
-  and `YOSMART_CHUNK_DELAY_MS`.
+- **Live-first + hub-interleaved chunking:** device states are fetched fresh
+  from YoSmart in **bounded concurrent rounds** (default 5 requests/round —
+  YoLink caps a UAC at ~5 connections). Reads are **interleaved across hubs**:
+  each round queries at most `YOSMART_PER_HUB_CONCURRENCY` (default 1) device per
+  hub, so a single hub's radio relay isn't overwhelmed (which causes
+  `000201`/`020104` errors) — parallelism comes from spreading across hubs.
+  Tunable via `YOSMART_STATE_CHUNK_SIZE`, `YOSMART_PER_HUB_CONCURRENCY`, and
+  `YOSMART_CHUNK_DELAY_MS`. Hub grouping uses each device's `parent_device_id`
+  (captured on sync); run `php artisan yosmart:sync` after deploying to backfill
+  it for existing devices.
 - **Cache fallback:** if a device's live read fails, the most recent cached
   live reading (≤60s) is returned instead — `source: "cache"`, `stale: true`.
 - **Rate limited (YoSmart `010301`):** the request still returns `200`; the

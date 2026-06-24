@@ -2,10 +2,9 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Store;
 use App\Models\StoreDevice;
 use App\Models\YoSmartCredential;
-use App\Services\YoSmartService;
+use App\Services\YoSmartDeviceSync;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -19,7 +18,7 @@ class YoSmartCredentialController extends Controller
             ->get();
 
         return response()->json([
-            'success'     => true,
+            'success' => true,
             'credentials' => $credentials,
         ]);
     }
@@ -28,18 +27,18 @@ class YoSmartCredentialController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'uaid'   => 'required|string|max:255|unique:yosmart_credentials,uaid',
+            'uaid' => 'required|string|max:255|unique:yosmart_credentials,uaid',
             'secret' => 'required|string|max:500',
         ]);
 
         $credential = YoSmartCredential::create([
-            'uaid'      => $validated['uaid'],
-            'secret'    => $validated['secret'],
+            'uaid' => $validated['uaid'],
+            'secret' => $validated['secret'],
             'is_active' => true,
         ]);
 
         return response()->json([
-            'success'    => true,
+            'success' => true,
             'credential' => $credential,
         ], 201);
     }
@@ -53,7 +52,7 @@ class YoSmartCredentialController extends Controller
         }]);
 
         return response()->json([
-            'success'    => true,
+            'success' => true,
             'credential' => $credential,
         ]);
     }
@@ -62,7 +61,7 @@ class YoSmartCredentialController extends Controller
     public function update(Request $request, YoSmartCredential $credential): JsonResponse
     {
         $validated = $request->validate([
-            'uaid'   => 'required|string|max:255|unique:yosmart_credentials,uaid,' . $credential->id,
+            'uaid' => 'required|string|max:255|unique:yosmart_credentials,uaid,'.$credential->id,
             'secret' => 'nullable|string|max:500',
         ]);
 
@@ -75,7 +74,7 @@ class YoSmartCredentialController extends Controller
         $credential->save();
 
         return response()->json([
-            'success'    => true,
+            'success' => true,
             'credential' => $credential,
         ]);
     }
@@ -94,100 +93,25 @@ class YoSmartCredentialController extends Controller
      * Fetch devices from YoSmart, upsert into store_devices,
      * auto-link to stores by parsing store number from device name.
      */
-    public function sync(YoSmartCredential $credential): JsonResponse
+    public function sync(YoSmartCredential $credential, YoSmartDeviceSync $sync): JsonResponse
     {
-        if (! $credential->hasCredentials()) {
+        $result = $sync->sync($credential);
+
+        if (! $result['ok']) {
+            $status = $result['reason'] === 'missing_credentials' ? 422 : 400;
+
             return response()->json([
                 'success' => false,
-                'error'   => 'Credential is missing UAID or secret.',
-            ], 422);
+                'error' => $result['message'],
+            ], $status);
         }
-
-        $service = new YoSmartService(
-            uaid:         $credential->uaid,
-            secret:       $credential->secret,
-            credentialId: $credential->id,
-        );
-
-        $devices = $service->listDevices();
-
-        if ($devices === null) {
-            return response()->json([
-                'success' => false,
-                'error'   => 'Failed to fetch device list from YoSmart.',
-            ], 400);
-        }
-
-        // Build a lookup of store_number → store_id
-        $storeMap = Store::where('is_active', true)
-            ->pluck('id', 'store_number')
-            ->toArray();
-
-        $synced    = 0;
-        $linked    = 0;
-        $unmatched = 0;
-
-        foreach ($devices as $device) {
-            $deviceId   = $device['deviceId'] ?? null;
-            $deviceName = $device['name'] ?? '';
-            $deviceType = $device['type'] ?? 'unknown';
-            $isHub      = $deviceType === 'Hub';
-
-            if (! $deviceId) {
-                continue;
-            }
-
-            // Parse store number from device name
-            $parsedNumber = StoreDevice::parseStoreNumber($deviceName);
-            $storeId      = $parsedNumber && isset($storeMap[$parsedNumber])
-                ? $storeMap[$parsedNumber]
-                : null;
-
-            // Hubs are global — don't link to a specific store
-            if ($isHub) {
-                $storeId      = null;
-                $parsedNumber = null;
-            }
-
-            StoreDevice::updateOrCreate(
-                [
-                    'credential_id' => $credential->id,
-                    'device_id'     => $deviceId,
-                ],
-                [
-                    'store_id'            => $storeId,
-                    'device_token'        => $device['token'] ?? '',
-                    'device_type'         => $deviceType,
-                    'device_name'         => $deviceName,
-                    'model_name'          => $device['modelName'] ?? null,
-                    'is_hub'              => $isHub,
-                    'parsed_store_number' => $parsedNumber,
-                ],
-            );
-
-            $synced++;
-
-            if ($storeId) {
-                $linked++;
-            } elseif (! $isHub) {
-                $unmatched++;
-            }
-        }
-
-        $credential->update(['last_synced_at' => now()]);
-
-        // Remove devices that no longer exist on YoSmart
-        $remoteIds = collect($devices)->pluck('deviceId')->filter()->toArray();
-        $removed   = StoreDevice::where('credential_id', $credential->id)
-            ->whereNotIn('device_id', $remoteIds)
-            ->delete();
 
         return response()->json([
-            'success'   => true,
-            'synced'    => $synced,
-            'linked'    => $linked,
-            'unmatched' => $unmatched,
-            'removed'   => $removed,
+            'success' => true,
+            'synced' => $result['synced'],
+            'linked' => $result['linked'],
+            'unmatched' => $result['unmatched'],
+            'removed' => $result['removed'],
         ]);
     }
 
@@ -201,7 +125,7 @@ class YoSmartCredentialController extends Controller
         if ((int) $device->credential_id !== (int) $credential->id) {
             return response()->json([
                 'success' => false,
-                'error'   => 'Device does not belong to this credential.',
+                'error' => 'Device does not belong to this credential.',
             ], 404);
         }
 
@@ -217,7 +141,7 @@ class YoSmartCredentialController extends Controller
 
         return response()->json([
             'success' => true,
-            'device'  => $device,
+            'device' => $device,
         ]);
     }
 }
