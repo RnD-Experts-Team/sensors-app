@@ -267,10 +267,118 @@ class PublicApiExternalAuthTest extends TestCase
             ->assertJsonPath('sensors.0.notice', 'Live data temporarily rate-limited; showing the last recorded reading.');
     }
 
-    public function test_live_sensor_state_is_cached_within_ttl(): void
+    public function test_live_is_fetched_every_request_cache_does_not_short_circuit(): void
+    {
+        // Live-first: each request fetches fresh state from YoSmart; the cache
+        // does NOT short-circuit a successful live read.
+        $stateCalls = 0;
+        Http::fake($this->successfulYoSmartHandler($stateCalls));
+
+        $url = "/api/stores/{$this->store->store_number}/sensors";
+
+        $this->withToken('valid-user-token')->getJson($url)->assertOk()->assertJsonPath('sensors.0.source', 'live');
+        $this->withToken('valid-user-token')->getJson($url)->assertOk()->assertJsonPath('sensors.0.source', 'live');
+
+        // 2 devices fetched live on BOTH requests (no cache short-circuit).
+        $this->assertSame(4, $stateCalls);
+    }
+
+    public function test_cache_is_used_as_fallback_when_live_fails(): void
+    {
+        // First a healthy response (which populates the cache), then a rate
+        // limit — the device should fall back to the cached live reading,
+        // flagged stale, in preference to the older persisted report.
+        $mode = 'ok';
+        Http::fake(function (ClientRequest $request) use (&$mode) {
+            if ($request->url() === 'https://auth.example.test/api/v1/auth/token-verify') {
+                return Http::response($this->verifyBody(), 200);
+            }
+            if ($request->url() === 'https://api.yosmart.com/open/yolink/token') {
+                return Http::response(['access_token' => 'yosmart-access-token', 'expires_in' => 3600], 200);
+            }
+            if ($request->url() === 'https://api.yosmart.com/open/yolink/v2/api') {
+                return $mode === 'ok'
+                    ? Http::response($this->yosmartStateResponse($request->data()), 200)
+                    : Http::response(['code' => '010301', 'desc' => 'Access denied due to limits reached, Please retry later'], 200);
+            }
+
+            return Http::response(['error' => 'Unexpected URL: '.$request->url()], 500);
+        });
+
+        $url = "/api/stores/{$this->store->store_number}/sensors?unit=F";
+
+        // 1) Healthy — fresh live value (5.10°C → 41.18°F), cached.
+        $this->withToken('valid-user-token')->getJson($url)
+            ->assertOk()
+            ->assertJsonPath('sensors.0.source', 'live')
+            ->assertJsonPath('sensors.0.temperature', 41.18);
+
+        // 2) Rate limited — falls back to the cached reading, not the DB report.
+        $mode = 'fail';
+        $this->withToken('valid-user-token')->getJson($url)
+            ->assertOk()
+            ->assertJsonPath('sensors.0.source', 'cache')
+            ->assertJsonPath('sensors.0.stale', true)
+            ->assertJsonPath('sensors.0.temperature', 41.18)
+            ->assertJsonPath('sensors.0.notice', 'Live data temporarily unavailable; showing the most recent cached reading.');
+    }
+
+    public function test_rate_limit_cooldown_short_circuits_remaining_chunks(): void
+    {
+        // chunk size 1 => devices are fetched one chunk at a time. The first
+        // 010301 engages the cooldown, so later chunks skip YoSmart entirely.
+        config()->set('services.yosmart.state_chunk_size', 1);
+
+        $stateCalls = 0;
+        Http::fake($this->rateLimitedYoSmartHandler($stateCalls));
+
+        $this->withToken('valid-user-token')
+            ->getJson("/api/stores/{$this->store->store_number}/sensors")
+            ->assertOk()
+            ->assertJsonPath('sensors.0.source', 'last_report');
+
+        // 2 devices, chunk size 1: only the first device actually hit YoSmart.
+        $this->assertSame(1, $stateCalls);
+    }
+
+    public function test_rate_limit_cooldown_blocks_subsequent_requests(): void
     {
         $stateCalls = 0;
+        Http::fake($this->rateLimitedYoSmartHandler($stateCalls));
 
+        $url = "/api/stores/{$this->store->store_number}/sensors";
+
+        // First request: both devices fetched in one chunk (2 calls), cooldown set.
+        $this->withToken('valid-user-token')->getJson($url)->assertOk();
+        // Second request: cooldown active -> served from last report, no upstream calls.
+        $this->withToken('valid-user-token')->getJson($url)
+            ->assertOk()
+            ->assertJsonPath('sensors.0.stale', true);
+
+        $this->assertSame(2, $stateCalls);
+    }
+
+    public function test_device_states_are_fetched_in_bounded_chunks(): void
+    {
+        // Force several chunks (chunk size 2) and add devices to span them.
+        config()->set('services.yosmart.state_chunk_size', 2);
+
+        $credential = YoSmartCredential::query()->firstOrFail();
+        foreach (range(2, 5) as $n) {
+            StoreDevice::create([
+                'credential_id' => $credential->id,
+                'store_id' => $this->store->id,
+                'device_id' => "sensor-00{$n}",
+                'device_token' => "sensor-00{$n}-token",
+                'device_type' => 'THSensor',
+                'device_name' => "freezer extra {$n}",
+                'model_name' => 'YS8003-UC',
+                'is_hub' => false,
+                'parsed_store_number' => $this->store->store_number,
+            ]);
+        }
+
+        $stateCalls = 0;
         Http::fake(function (ClientRequest $request) use (&$stateCalls) {
             if ($request->url() === 'https://auth.example.test/api/v1/auth/token-verify') {
                 return Http::response($this->verifyBody(), 200);
@@ -287,20 +395,48 @@ class PublicApiExternalAuthTest extends TestCase
             return Http::response(['error' => 'Unexpected URL: '.$request->url()], 500);
         });
 
-        $url = "/api/stores/{$this->store->store_number}/sensors";
+        // 1 hub + 5 sensors = 6 devices, fetched across 3 chunks of 2.
+        $this->withToken('valid-user-token')
+            ->getJson("/api/stores/{$this->store->store_number}/sensors")
+            ->assertOk()
+            ->assertJsonPath('count', 5)
+            ->assertJsonPath('sensors.0.source', 'live')
+            ->assertJsonPath('hub.source', 'live');
 
-        $this->withToken('valid-user-token')->getJson($url)->assertOk()->assertJsonPath('sensors.0.source', 'live');
-        $this->withToken('valid-user-token')->getJson($url)->assertOk()->assertJsonPath('sensors.0.source', 'cache');
-
-        // 2 devices fetched once each on the first call; the second call is served from cache.
-        $this->assertSame(2, $stateCalls);
+        // Every device was fetched exactly once across the chunks.
+        $this->assertSame(6, $stateCalls);
     }
 
-    public function test_rate_limit_engages_cooldown_and_stops_calling_upstream(): void
+    /**
+     * Builds an Http::fake handler that returns healthy YoSmart device-state
+     * responses while counting how many device-state calls were made.
+     */
+    private function successfulYoSmartHandler(int &$stateCalls): callable
     {
-        $stateCalls = 0;
+        return function (ClientRequest $request) use (&$stateCalls) {
+            if ($request->url() === 'https://auth.example.test/api/v1/auth/token-verify') {
+                return Http::response($this->verifyBody(), 200);
+            }
+            if ($request->url() === 'https://api.yosmart.com/open/yolink/token') {
+                return Http::response(['access_token' => 'yosmart-access-token', 'expires_in' => 3600], 200);
+            }
+            if ($request->url() === 'https://api.yosmart.com/open/yolink/v2/api') {
+                $stateCalls++;
 
-        Http::fake(function (ClientRequest $request) use (&$stateCalls) {
+                return Http::response($this->yosmartStateResponse($request->data()), 200);
+            }
+
+            return Http::response(['error' => 'Unexpected URL: '.$request->url()], 500);
+        };
+    }
+
+    /**
+     * Builds an Http::fake handler that rate-limits every YoSmart device-state
+     * call (010301) while counting how many were made.
+     */
+    private function rateLimitedYoSmartHandler(int &$stateCalls): callable
+    {
+        return function (ClientRequest $request) use (&$stateCalls) {
             if ($request->url() === 'https://auth.example.test/api/v1/auth/token-verify') {
                 return Http::response($this->verifyBody(), 200);
             }
@@ -317,16 +453,7 @@ class PublicApiExternalAuthTest extends TestCase
             }
 
             return Http::response(['error' => 'Unexpected URL: '.$request->url()], 500);
-        });
-
-        $this->withToken('valid-user-token')
-            ->getJson("/api/stores/{$this->store->store_number}/sensors")
-            ->assertOk()
-            ->assertJsonPath('sensors.0.source', 'last_report');
-
-        // The first device hit the limit and engaged the cooldown; the remaining
-        // device(s) were served from the last report WITHOUT calling YoSmart again.
-        $this->assertSame(1, $stateCalls);
+        };
     }
 
     private function fakeRateLimitedYoSmart(): void

@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use Illuminate\Http\Client\Pool;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -22,6 +24,12 @@ class YoSmartService
 
     /** YoSmart error code: "Access denied due to limits reached, please retry later". */
     public const RATE_LIMIT_CODE = '010301';
+
+    /**
+     * Default number of device-state requests fetched concurrently per chunk.
+     * YoLink limits a UAC to ~5 concurrent connections, so we cap at 5.
+     */
+    private const STATE_CHUNK_SIZE = 5;
 
     /** Error codes that mean the access token must be refreshed. */
     private const TOKEN_ERROR_CODES = [
@@ -266,44 +274,113 @@ class YoSmartService
     }
 
     /**
-     * Read a single device's live state with built-in rate-limit protection:
+     * Read live state for many devices belonging to THIS credential.
      *
-     *  - Layer 1: serves a cached state (≤ STATE_CACHE_TTL seconds old) without
-     *    calling YoSmart, collapsing bursts of reads into one upstream request.
-     *  - Layer 3: when YoSmart replies 010301 (rate limit reached) it opens a
-     *    short cooldown for this credential; while the cooldown is active no
-     *    upstream calls are made at all, so we stop digging into the limit.
+     * Live-first with the cache as a fallback:
+     *  - Chunked concurrency: every device is fetched fresh from YoLink in
+     *    chunks of `state_chunk_size` concurrent requests (YoLink caps a UAC at
+     *    ~5 connections), instead of one slow sequential loop or one unbounded
+     *    burst that would itself trip the limit.
+     *  - Cache fallback: when a device's live read fails (rate-limited, errored,
+     *    or skipped during a cooldown), the most recent cached live reading
+     *    (≤ STATE_CACHE_TTL) is served instead, flagged stale.
+     *  - Cooldown: the moment YoLink replies 010301 a short cooldown is opened;
+     *    the rest of this batch — and any request during the cooldown — skips
+     *    YoLink and uses the fallback.
      *
-     * Returns a structured result; the caller decides how to present a failure
-     * (e.g. fall back to the last persisted reading):
-     *   ['ok' => bool, 'source' => 'cache'|'live'|'cooldown'|'rate_limited'|'error',
-     *    'code' => ?string, 'data' => ?array, 'desc' => ?string]
+     * @param  array<int, array{device_type: string, device_id: string, device_token: string}>  $devices
+     * @return array<string, array{ok: bool, source: string, stale: bool, code: ?string, data: ?array, desc: ?string}>
+     *                                                                                                                 keyed by device_id; source ∈ live|cache|cooldown|rate_limited|error
      */
-    public function getDeviceState(string $deviceType, string $deviceId, string $deviceToken): array
+    public function getDeviceStates(array $devices, ?int $chunkSize = null): array
     {
-        $stateKey = "yosmart_state_{$this->credentialId}_{$deviceId}";
+        $chunkSize = max(1, $chunkSize ?? (int) config('services.yosmart.state_chunk_size', self::STATE_CHUNK_SIZE));
+        $delayMs = max(0, (int) config('services.yosmart.chunk_delay_ms', 0));
         $cooldownKey = "yosmart_cooldown_{$this->credentialId}";
 
-        // Layer 1 — fresh cached state.
-        $cached = Cache::get($stateKey);
-        if (is_array($cached)) {
-            return $this->stateResult(true, 'cache', $cached);
-        }
+        $results = [];
 
-        // Layer 3 — account is cooling down after a recent rate limit.
+        // While cooling down after a recent rate limit, don't call YoLink at
+        // all — go straight to the fallback (cache, then last report).
         if (Cache::get($cooldownKey)) {
-            return $this->stateResult(false, 'cooldown', null);
+            foreach ($devices as $device) {
+                $results[$device['device_id']] = $this->fallbackState($device['device_id'], 'cooldown');
+            }
+
+            return $results;
         }
 
-        $result = $this->callApi($this->resolveGetStateMethod($deviceType), [
-            'targetDevice' => $deviceId,
-            'token' => $deviceToken,
-        ]);
+        $token = $this->getAccessToken();
+        if (! $token) {
+            foreach ($devices as $device) {
+                $results[$device['device_id']] = $this->fallbackState($device['device_id'], 'error');
+            }
 
-        $code = $result['code'] ?? null;
+            return $results;
+        }
+
+        // Live-first: fetch every device in bounded concurrent chunks. The cache
+        // is only consulted as a fallback (see resolveChunkResponse).
+        foreach (array_chunk($devices, $chunkSize) as $index => $chunk) {
+            // A previous chunk tripped the limit — stop calling; use fallbacks.
+            if (Cache::get($cooldownKey)) {
+                foreach ($chunk as $device) {
+                    $results[$device['device_id']] = $this->fallbackState($device['device_id'], 'cooldown');
+                }
+
+                continue;
+            }
+
+            if ($index > 0 && $delayMs > 0) {
+                usleep($delayMs * 1000);
+            }
+
+            $keyed = [];
+            foreach ($chunk as $device) {
+                $keyed[$device['device_id']] = $device;
+            }
+
+            $responses = Http::pool(fn (Pool $pool) => array_map(
+                fn (array $device, string $deviceId) => $pool
+                    ->as($deviceId)
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'Authorization' => "Bearer {$token}",
+                    ])
+                    ->timeout(10)
+                    ->post(self::API_URL, [
+                        'method' => $this->resolveGetStateMethod($device['device_type']),
+                        'time' => intval(microtime(true) * 1000),
+                        'targetDevice' => $deviceId,
+                        'token' => $device['device_token'],
+                    ]),
+                array_values($keyed),
+                array_keys($keyed),
+            ));
+
+            foreach ($keyed as $deviceId => $device) {
+                $results[$deviceId] = $this->resolveChunkResponse($responses[$deviceId] ?? null, $deviceId, $cooldownKey);
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Map a single pooled response into a structured state result. A successful
+     * read is cached and returned as fresh `live` data; any failure falls back
+     * to the cached reading (and opens the cooldown on a rate-limit reply).
+     */
+    private function resolveChunkResponse(mixed $response, string $deviceId, string $cooldownKey): array
+    {
+        $result = ($response instanceof Response && $response->successful())
+            ? $response->json()
+            : null;
+
+        $code = is_array($result) ? ($result['code'] ?? null) : null;
 
         if ($code === '000000') {
-            Cache::put($stateKey, $result, self::STATE_CACHE_TTL);
+            Cache::put("yosmart_state_{$this->credentialId}_{$deviceId}", $result, self::STATE_CACHE_TTL);
 
             return $this->stateResult(true, 'live', $result);
         }
@@ -316,20 +393,38 @@ class YoSmartService
                 'cooldown_secs' => self::COOLDOWN_TTL,
             ]);
 
-            return $this->stateResult(false, 'rate_limited', $result);
+            return $this->fallbackState($deviceId, 'rate_limited', $result);
         }
 
-        return $this->stateResult(false, 'error', is_array($result) ? $result : null);
+        return $this->fallbackState($deviceId, 'error', is_array($result) ? $result : null);
     }
 
     /**
-     * @return array{ok: bool, source: string, code: ?string, data: ?array, desc: ?string}
+     * Fallback for a device whose live read failed (or was skipped during a
+     * cooldown): serve the most recent cached live reading if we have one,
+     * marked stale. Otherwise signal the caller (ok=false) so it can fall back
+     * to its own source (the last persisted report).
      */
-    private function stateResult(bool $ok, string $source, ?array $result): array
+    private function fallbackState(string $deviceId, string $source, ?array $result = null): array
+    {
+        $cached = Cache::get("yosmart_state_{$this->credentialId}_{$deviceId}");
+
+        if (is_array($cached)) {
+            return $this->stateResult(true, 'cache', $cached, true);
+        }
+
+        return $this->stateResult(false, $source, $result, true);
+    }
+
+    /**
+     * @return array{ok: bool, source: string, stale: bool, code: ?string, data: ?array, desc: ?string}
+     */
+    private function stateResult(bool $ok, string $source, ?array $result, bool $stale = false): array
     {
         return [
             'ok' => $ok,
             'source' => $source,
+            'stale' => $stale,
             'code' => $result['code'] ?? null,
             'data' => $result['data'] ?? null,
             'desc' => $result['desc'] ?? null,

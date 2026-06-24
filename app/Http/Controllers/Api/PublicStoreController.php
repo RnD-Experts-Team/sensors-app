@@ -138,8 +138,22 @@ class PublicStoreController extends Controller
                 credentialId: $credential->id,
             );
 
+            // Fetch every device for this credential in bounded concurrent
+            // chunks (cache-first, cooldown-aware), then shape each entry.
+            $states = $service->getDeviceStates(
+                $credentialDevices->map(fn (StoreDevice $device) => [
+                    'device_type' => $device->device_type,
+                    'device_id' => $device->device_id,
+                    'device_token' => $device->device_token,
+                ])->all(),
+            );
+
             foreach ($credentialDevices as $device) {
-                $entry = $this->deviceLiveEntry($service, $device, $targetUnit);
+                $entry = $this->entryFromState(
+                    $device,
+                    $states[$device->device_id] ?? $this->unknownState(),
+                    $targetUnit,
+                );
 
                 if ($device->is_hub) {
                     $hub = $entry;
@@ -161,41 +175,47 @@ class PublicStoreController extends Controller
     }
 
     /**
-     * Fetch and shape the live state for a single device.
+     * Shape one device entry from its already-fetched state result.
      *
-     * Uses the rate-limit-protected reader (cache + cooldown). When live state
-     * is unavailable (rate-limited, cooling down, or errored), falls back to the
-     * device's last persisted reading so the caller still gets usable data
-     * instead of an error — clearly flagged via `source` / `stale` / `notice`.
+     * On a usable live/cache state, returns the fresh reading. Otherwise
+     * (rate-limited, cooling down, or errored) falls back to the device's last
+     * persisted reading so the caller still gets usable data instead of an
+     * error — clearly flagged via `source` / `stale` / `notice`.
      */
-    private function deviceLiveEntry(YoSmartService $service, StoreDevice $device, string $targetUnit): array
+    private function entryFromState(StoreDevice $device, array $result, string $targetUnit): array
     {
-        $result = $service->getDeviceState(
-            $device->device_type,
-            $device->device_id,
-            $device->device_token,
-        );
-
-        if (! $result['ok']) {
+        if (! ($result['ok'] ?? false)) {
             return $this->lastReportEntry($device, $targetUnit, $result);
         }
 
         $data = $result['data'] ?? [];
         $rawState = $data['state'] ?? null;
         $rawTemp = is_array($rawState) ? ($rawState['temperature'] ?? null) : null;
+        $stale = (bool) ($result['stale'] ?? false);
 
         return $this->deviceMeta($device, $targetUnit) + [
             'online' => $data['online'] ?? null,
             'temperature' => AppSetting::convertTemp($rawTemp, 'c', $targetUnit),
             'state' => $rawState,
             'reported_at' => $data['reportAt'] ?? null,
-            'source' => $result['source'],   // 'live' | 'cache'
-            'stale' => false,
+            'source' => $result['source'],   // 'live' (fresh) | 'cache' (stale fallback)
+            'stale' => $stale,
             'as_of' => $data['reportAt'] ?? null,
             'success' => true,
             'error' => null,
-            'notice' => null,
+            'notice' => $stale
+                ? 'Live data temporarily unavailable; showing the most recent cached reading.'
+                : null,
         ];
+    }
+
+    /**
+     * Fallback state result for a device the batch fetch didn't return (should
+     * not happen in practice; keeps entry shaping total).
+     */
+    private function unknownState(): array
+    {
+        return ['ok' => false, 'source' => 'error', 'code' => null, 'data' => null, 'desc' => null];
     }
 
     /**

@@ -861,24 +861,33 @@ YoSmart (YoLink) enforces an upstream rate limit. To stay under it and to keep
 the API usable when it is hit, every device entry returned by the live sensor
 endpoints carries freshness metadata:
 
+Reads are **live-first**: every device is fetched fresh from YoSmart on each
+request; the cache and the stored report are only used as fallbacks when the
+live read fails. The fallback order is **live → cache → last_report → unavailable**.
+
 | Field | Type | Meaning |
 |---|---|---|
-| `source` | string | Where the reading came from: `live` (just fetched), `cache` (served from a ≤60s cache), `last_report` (rate-limited/unavailable → last stored reading), or `unavailable` (no live data and nothing ever recorded). |
-| `stale` | bool | `true` when the value is a `last_report`/`unavailable` fallback rather than current live/cached data. |
+| `source` | string | Where the reading came from: `live` (just fetched, fresh), `cache` (live read failed → most recent cached live reading, ≤60s), `last_report` (no cache → last stored DB reading), or `unavailable` (no live data and nothing ever recorded). |
+| `stale` | bool | `true` for any non-`live` source (`cache`/`last_report`/`unavailable`). `false` only for fresh `live` data. |
 | `as_of` | string\|null | ISO-8601 timestamp the reading is accurate as of. |
-| `notice` | string\|null | Human-readable reason when `stale` (e.g. rate-limited); `null` on fresh reads. |
+| `notice` | string\|null | Human-readable reason when `stale`; `null` on fresh `live` reads. |
 
 Behavior:
 
-- **Caching:** each device's live state is cached for ~60s, so repeated calls
-  don't re-hit YoSmart. The response stays `200`; `source` becomes `cache`.
-- **Rate limited (YoSmart `010301`):** the device falls back to its last stored
-  reading — `source: "last_report"`, `stale: true`, with a `notice`. The request
-  still returns `200`; render the value with an "updated `as_of`" indicator
-  rather than an error. After a rate limit, the API briefly stops calling
-  YoSmart (cooldown) and serves cached/last-report data so the limit can recover.
-- **No data at all:** if a device is rate-limited/unreachable **and** has never
-  been recorded, its entry is `source: "unavailable"`, `success: false`.
+- **Live-first + chunked fetching:** device states are fetched fresh from
+  YoSmart in **bounded concurrent chunks** (default 5 at a time — YoLink caps a
+  UAC at ~5 connections) rather than all at once. This keeps data current and
+  avoids self-inflicting the rate limit. Tunable via `YOSMART_STATE_CHUNK_SIZE`
+  and `YOSMART_CHUNK_DELAY_MS`.
+- **Cache fallback:** if a device's live read fails, the most recent cached
+  live reading (≤60s) is returned instead — `source: "cache"`, `stale: true`.
+- **Rate limited (YoSmart `010301`):** the request still returns `200`; the
+  device falls back to `cache`, or to `last_report` (the last stored DB reading)
+  if no cache exists — `stale: true`, with a `notice`. After a rate limit the
+  API briefly stops calling YoSmart (cooldown) and serves fallbacks so the limit
+  can recover.
+- **No data at all:** if a device's live read fails, has no cache, **and** has
+  never been recorded, its entry is `source: "unavailable"`, `success: false`.
 
 > **Frontend tip:** treat `stale === true` as "show last value + subtle 'live
 > refresh paused' badge", not as an error. The request itself is still `200`.

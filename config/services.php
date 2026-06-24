@@ -38,6 +38,12 @@ return [
     'yosmart' => [
         'uaid' => env('YOSMART_UAID'),
         'secret' => env('YOSMART_SECRET'),
+
+        // Live-read tuning. YoLink limits a UAC to ~5 concurrent connections, so
+        // device-state reads are fetched in chunks of this many concurrent
+        // requests. chunk_delay_ms optionally paces successive chunks.
+        'state_chunk_size' => (int) env('YOSMART_STATE_CHUNK_SIZE', 5),
+        'chunk_delay_ms' => (int) env('YOSMART_CHUNK_DELAY_MS', 0),
     ],
 
     'auth_server' => [
