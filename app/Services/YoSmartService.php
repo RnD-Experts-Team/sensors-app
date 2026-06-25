@@ -38,6 +38,13 @@ class YoSmartService
      */
     private const PER_HUB_CONCURRENCY = 1;
 
+    /** Background capture pacing/retry defaults (used by captureDeviceStates). */
+    private const CAPTURE_CHUNK_DELAY_MS = 1500;
+
+    private const CAPTURE_MAX_RETRIES = 3;
+
+    private const CAPTURE_BACKOFF_MS = 5000;
+
     /** Error codes that mean the access token must be refreshed. */
     private const TOKEN_ERROR_CODES = [
         '010103', // Authorization is invalid
@@ -351,35 +358,141 @@ class YoSmartService
                 usleep($delayMs * 1000);
             }
 
-            $keyed = [];
+            $responses = $this->poolChunk($chunk, $token);
+
             foreach ($chunk as $device) {
-                $keyed[$device['device_id']] = $device;
-            }
-
-            $responses = Http::pool(fn (Pool $pool) => array_map(
-                fn (array $device, string $deviceId) => $pool
-                    ->as($deviceId)
-                    ->withHeaders([
-                        'Content-Type' => 'application/json',
-                        'Authorization' => "Bearer {$token}",
-                    ])
-                    ->timeout(10)
-                    ->post(self::API_URL, [
-                        'method' => $this->resolveGetStateMethod($device['device_type']),
-                        'time' => intval(microtime(true) * 1000),
-                        'targetDevice' => $deviceId,
-                        'token' => $device['device_token'],
-                    ]),
-                array_values($keyed),
-                array_keys($keyed),
-            ));
-
-            foreach ($keyed as $deviceId => $device) {
+                $deviceId = $device['device_id'];
                 $results[$deviceId] = $this->resolveChunkResponse($responses[$deviceId] ?? null, $deviceId, $cooldownKey);
             }
         }
 
         return $results;
+    }
+
+    /**
+     * Background capture of live state for many devices: paced and rate-limit
+     * aware. Unlike getDeviceStates() this uses NO cache, cooldown, or DB
+     * fallback — it returns the raw live read per device so the caller persists
+     * only successful reads. Paces a delay between rounds and, on 010301, backs
+     * off and retries the affected devices instead of abandoning the run, so a
+     * single run can walk every device within YoLink's rate limit.
+     *
+     * @param  array<int, array{device_type:string, device_id:string, device_token:string, hub_key?:string}>  $devices
+     * @param  array<string, int>  $opts  chunk_size|per_hub_concurrency|chunk_delay_ms|max_retries|backoff_ms
+     * @return array<string, array{success: bool, data: ?array, code: ?string}> keyed by device_id
+     */
+    public function captureDeviceStates(array $devices, array $opts = []): array
+    {
+        $maxHubsPerRound = max(1, (int) ($opts['chunk_size'] ?? config('services.yosmart.state_chunk_size', self::STATE_CHUNK_SIZE)));
+        $perHubConcurrency = max(1, (int) ($opts['per_hub_concurrency'] ?? config('services.yosmart.per_hub_concurrency', self::PER_HUB_CONCURRENCY)));
+        $delayMs = max(0, (int) ($opts['chunk_delay_ms'] ?? config('services.yosmart.capture_chunk_delay_ms', self::CAPTURE_CHUNK_DELAY_MS)));
+        $maxRetries = max(0, (int) ($opts['max_retries'] ?? config('services.yosmart.capture_max_retries', self::CAPTURE_MAX_RETRIES)));
+        $backoffMs = max(0, (int) ($opts['backoff_ms'] ?? config('services.yosmart.capture_backoff_ms', self::CAPTURE_BACKOFF_MS)));
+
+        foreach ($devices as &$device) {
+            $device['hub_key'] = ($device['hub_key'] ?? null) ?: $device['device_id'];
+        }
+        unset($device);
+
+        $results = [];
+
+        $token = $this->getAccessToken();
+        if (! $token) {
+            foreach ($devices as $device) {
+                $results[$device['device_id']] = ['success' => false, 'data' => null, 'code' => null];
+            }
+
+            return $results;
+        }
+
+        foreach ($this->buildHubRounds($devices, $maxHubsPerRound, $perHubConcurrency) as $index => $chunk) {
+            if ($index > 0 && $delayMs > 0) {
+                usleep($delayMs * 1000);
+            }
+
+            $pending = $chunk;
+            $attempt = 0;
+
+            while ($pending !== []) {
+                $responses = $this->poolChunk($pending, $token);
+                $retry = [];
+
+                foreach ($pending as $device) {
+                    $deviceId = $device['device_id'];
+                    $result = $this->jsonFromResponse($responses[$deviceId] ?? null);
+                    $code = is_array($result) ? ($result['code'] ?? null) : null;
+
+                    if ($code === '000000') {
+                        $results[$deviceId] = ['success' => true, 'data' => $result['data'] ?? null, 'code' => $code];
+
+                        continue;
+                    }
+
+                    // Retry only the rate-limited devices, with backoff.
+                    if ($code === self::RATE_LIMIT_CODE && $attempt < $maxRetries) {
+                        $retry[] = $device;
+
+                        continue;
+                    }
+
+                    $results[$deviceId] = ['success' => false, 'data' => null, 'code' => $code];
+                }
+
+                if ($retry === []) {
+                    break;
+                }
+
+                $attempt++;
+                if ($backoffMs > 0) {
+                    usleep($backoffMs * 1000);
+                }
+                $pending = $retry;
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Issue one Http::pool round for a chunk of devices; returns the responses
+     * keyed by device_id.
+     *
+     * @param  array<int, array{device_type:string, device_id:string, device_token:string}>  $chunk
+     */
+    private function poolChunk(array $chunk, string $token): array
+    {
+        $keyed = [];
+        foreach ($chunk as $device) {
+            $keyed[$device['device_id']] = $device;
+        }
+
+        return Http::pool(fn (Pool $pool) => array_map(
+            fn (array $device, string $deviceId) => $pool
+                ->as($deviceId)
+                ->withHeaders([
+                    'Content-Type' => 'application/json',
+                    'Authorization' => "Bearer {$token}",
+                ])
+                ->timeout(10)
+                ->post(self::API_URL, [
+                    'method' => $this->resolveGetStateMethod($device['device_type']),
+                    'time' => intval(microtime(true) * 1000),
+                    'targetDevice' => $deviceId,
+                    'token' => $device['device_token'],
+                ]),
+            array_values($keyed),
+            array_keys($keyed),
+        ));
+    }
+
+    /**
+     * Decode a pooled response to a JSON array, or null on transport/HTTP error.
+     */
+    private function jsonFromResponse(mixed $response): ?array
+    {
+        return ($response instanceof Response && $response->successful())
+            ? $response->json()
+            : null;
     }
 
     /**
@@ -442,9 +555,7 @@ class YoSmartService
      */
     private function resolveChunkResponse(mixed $response, string $deviceId, string $cooldownKey): array
     {
-        $result = ($response instanceof Response && $response->successful())
-            ? $response->json()
-            : null;
+        $result = $this->jsonFromResponse($response);
 
         $code = is_array($result) ? ($result['code'] ?? null) : null;
 

@@ -47,6 +47,14 @@ return [
         'state_chunk_size' => (int) env('YOSMART_STATE_CHUNK_SIZE', 5),
         'per_hub_concurrency' => (int) env('YOSMART_PER_HUB_CONCURRENCY', 1),
         'chunk_delay_ms' => (int) env('YOSMART_CHUNK_DELAY_MS', 0),
+
+        // Background capture (snapshots:capture). Unlike the live read above this
+        // runs in CLI, so it paces requests and retries the rate limit (010301)
+        // with backoff instead of failing fast — letting one run cover every
+        // device within YoLink's limit.
+        'capture_chunk_delay_ms' => (int) env('YOSMART_CAPTURE_CHUNK_DELAY_MS', 1500),
+        'capture_max_retries' => (int) env('YOSMART_CAPTURE_MAX_RETRIES', 3),
+        'capture_backoff_ms' => (int) env('YOSMART_CAPTURE_BACKOFF_MS', 5000),
     ],
 
     'auth_server' => [

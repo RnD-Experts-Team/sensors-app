@@ -23,11 +23,11 @@ class SnapshotSchedule extends Model
     protected function casts(): array
     {
         return [
-            'is_active'            => 'boolean',
-            'interval_minutes'     => 'integer',
-            'last_run_at'          => 'datetime',
-            'next_run_at'          => 'datetime',
-            'total_runs'           => 'integer',
+            'is_active' => 'boolean',
+            'interval_minutes' => 'integer',
+            'last_run_at' => 'datetime',
+            'next_run_at' => 'datetime',
+            'total_runs' => 'integer',
             'consecutive_failures' => 'integer',
         ];
     }
@@ -40,8 +40,8 @@ class SnapshotSchedule extends Model
     public static function global(): static
     {
         return static::firstOrCreate([], [
-            'is_active'        => false,
-            'interval_minutes' => 60,
+            'is_active' => false,
+            'interval_minutes' => 10,
         ]);
     }
 
@@ -56,22 +56,22 @@ class SnapshotSchedule extends Model
     public function markRanSuccessfully(): void
     {
         $this->update([
-            'last_run_at'          => now(),
-            'next_run_at'          => now()->addMinutes($this->interval_minutes),
-            'total_runs'           => $this->total_runs + 1,
+            'last_run_at' => now(),
+            'next_run_at' => now()->addMinutes($this->interval_minutes),
+            'total_runs' => $this->total_runs + 1,
             'consecutive_failures' => 0,
-            'last_error'           => null,
+            'last_error' => null,
         ]);
     }
 
     public function markFailed(string $error): void
     {
         $this->update([
-            'last_run_at'          => now(),
-            'next_run_at'          => now()->addMinutes($this->interval_minutes),
-            'total_runs'           => $this->total_runs + 1,
+            'last_run_at' => now(),
+            'next_run_at' => now()->addMinutes($this->interval_minutes),
+            'total_runs' => $this->total_runs + 1,
             'consecutive_failures' => $this->consecutive_failures + 1,
-            'last_error'           => $error,
+            'last_error' => $error,
         ]);
     }
 }
